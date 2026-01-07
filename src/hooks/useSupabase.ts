@@ -122,16 +122,23 @@ export function useSupabase(options: UseSupabaseOptions = {}) {
   const loadEdgeLogsMutation = useMutation<
     void,
     Error,
-    { projectId: string; organizationSlug?: string }
+    { projectId: string; organizationSlug?: string; forceRefresh?: boolean }
   >({
-    mutationFn: async ({ projectId, organizationSlug }) => {
+    mutationFn: async ({
+      projectId,
+      organizationSlug,
+      forceRefresh = false,
+    }) => {
       if (!selectedAppId) return;
 
       const ipcClient = IpcClient.getInstance();
 
       // Use last timestamp if available, otherwise fetch logs from the past 10 minutes
+      // If forceRefresh is true, fetch from the past 10 minutes to get the most recent logs
       const lastTimestamp = lastLogTimestamp[projectId];
-      const timestampStart = lastTimestamp ?? Date.now() - 10 * 60 * 1000;
+      const timestampStart = forceRefresh
+        ? Date.now() - 10 * 60 * 1000
+        : (lastTimestamp ?? Date.now() - 10 * 60 * 1000);
 
       const logs = await ipcClient.getSupabaseEdgeLogs({
         projectId,
@@ -151,8 +158,24 @@ export function useSupabase(options: UseSupabaseOptions = {}) {
         return;
       }
 
-      // Logs are already in ConsoleEntry format, just append them
-      setConsoleEntries((prev) => [...prev, ...logs]);
+      // When force refreshing, filter out logs that are already in the console to avoid duplicates
+      // Create a Set of existing log keys (timestamp + message) for fast lookup
+      setConsoleEntries((prev) => {
+        if (forceRefresh) {
+          const existingKeys = new Set(
+            prev.map((entry) => `${entry.timestamp}-${entry.message}`),
+          );
+          const newLogs = logs.filter(
+            (log) => !existingKeys.has(`${log.timestamp}-${log.message}`),
+          );
+          console.log(
+            `[Edge Logs] Filtered ${logs.length - newLogs.length} duplicate logs, adding ${newLogs.length} new logs`,
+          );
+          return [...prev, ...newLogs];
+        }
+        // For normal polling, just append (they should already be new)
+        return [...prev, ...logs];
+      });
 
       // Update the last timestamp for this project
       const latestLog = logs.reduce((latest, log) =>

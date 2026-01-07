@@ -1,4 +1,4 @@
-import { Filter, X } from "lucide-react";
+import { Filter, X, RefreshCw } from "lucide-react";
 
 interface ConsoleFiltersProps {
   levelFilter: "all" | "info" | "warn" | "error";
@@ -22,6 +22,8 @@ interface ConsoleFiltersProps {
   ) => void;
   onSourceFilterChange: (value: string) => void;
   onClearFilters: () => void;
+  onRefreshEdgeLogs?: () => void;
+  isRefreshingEdgeLogs?: boolean;
   uniqueSources: string[];
   totalLogs: number;
   showFilters: boolean;
@@ -35,6 +37,8 @@ export const ConsoleFilters = ({
   onTypeFilterChange,
   onSourceFilterChange,
   onClearFilters,
+  onRefreshEdgeLogs,
+  isRefreshingEdgeLogs = false,
   uniqueSources,
   totalLogs,
   showFilters,
@@ -112,6 +116,22 @@ export const ConsoleFilters = ({
         >
           <X size={12} />
           Clear
+        </button>
+      )}
+
+      {/* Refresh edge logs button */}
+      {onRefreshEdgeLogs && (
+        <button
+          onClick={onRefreshEdgeLogs}
+          disabled={isRefreshingEdgeLogs}
+          className="text-xs px-2 py-1 flex items-center gap-1 border border-border rounded bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Refresh edge function logs from the past 10 minutes"
+        >
+          <RefreshCw
+            size={12}
+            className={isRefreshingEdgeLogs ? "animate-spin" : ""}
+          />
+          Refresh Logs
         </button>
       )}
 

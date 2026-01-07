@@ -54,6 +54,7 @@ export function PreviewPanel() {
   const [previewMode] = useAtom(previewModeAtom);
   const selectedAppId = useAtomValue(selectedAppIdAtom);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const { runApp, stopApp, loading, app } = useRunApp();
   const { loadEdgeLogs } = useSupabase();
   const runningAppIdRef = useRef<number | null>(null);
@@ -64,6 +65,25 @@ export function PreviewPanel() {
     consoleEntries.length > 0
       ? consoleEntries[consoleEntries.length - 1]?.message
       : undefined;
+
+  // Manual refresh handler for edge function logs
+  const handleRefreshEdgeLogs = () => {
+    const projectId = app?.supabaseProjectId;
+    const organizationSlug = app?.supabaseOrganizationSlug ?? undefined;
+    if (!projectId || isManualRefreshing) return;
+
+    // Set loading state for manual refresh
+    setIsManualRefreshing(true);
+
+    loadEdgeLogs({ projectId, organizationSlug, forceRefresh: true })
+      .then(() => {
+        setIsManualRefreshing(false);
+      })
+      .catch((error) => {
+        console.error("Failed to refresh edge logs:", error);
+        setIsManualRefreshing(false);
+      });
+  };
 
   useEffect(() => {
     const previousAppId = runningAppIdRef.current;
@@ -162,7 +182,12 @@ export function PreviewPanel() {
                     onToggle={() => setIsConsoleOpen(false)}
                     latestMessage={latestMessage}
                   />
-                  <Console />
+                  <Console
+                    onRefreshEdgeLogs={
+                      app?.supabaseProjectId ? handleRefreshEdgeLogs : undefined
+                    }
+                    isRefreshingEdgeLogs={isManualRefreshing}
+                  />
                 </div>
               </Panel>
             </>

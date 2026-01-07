@@ -60,8 +60,16 @@ const ConsoleItem = memo(
 
 ConsoleItem.displayName = "ConsoleItem";
 
-// Console component
-export const Console = () => {
+// Console component - accepts optional refresh handler and loading state
+interface ConsoleProps {
+  onRefreshEdgeLogs?: () => void;
+  isRefreshingEdgeLogs?: boolean;
+}
+
+export const Console = ({
+  onRefreshEdgeLogs,
+  isRefreshingEdgeLogs = false,
+}: ConsoleProps = {}) => {
   const consoleEntries = useAtomValue(appConsoleEntriesAtom);
   const { settings } = useSettings();
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -218,6 +226,8 @@ export const Console = () => {
         onTypeFilterChange={setTypeFilter}
         onSourceFilterChange={setSourceFilter}
         onClearFilters={handleClearFilters}
+        onRefreshEdgeLogs={onRefreshEdgeLogs}
+        isRefreshingEdgeLogs={isRefreshingEdgeLogs}
         uniqueSources={uniqueSources}
         totalLogs={filteredEntries.length}
         showFilters={showFilters}
