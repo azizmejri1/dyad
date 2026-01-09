@@ -19,6 +19,7 @@ import { getSupabaseTableSchemaTool } from "./tools/get_supabase_table_schema";
 import { setChatSummaryTool } from "./tools/set_chat_summary";
 import { addIntegrationTool } from "./tools/add_integration";
 import { readLogsTool } from "./tools/read_logs";
+import { todoWriteTool } from "./tools/todo_write";
 import { editFileTool } from "./tools/edit_file";
 import { webSearchTool } from "./tools/web_search";
 import { webCrawlTool } from "./tools/web_crawl";
@@ -51,6 +52,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   readLogsTool,
   webSearchTool,
   webCrawlTool,
+  todoWriteTool,
 ];
 // ============================================================================
 // Agent Tool Name Type (derived from TOOL_DEFINITIONS)

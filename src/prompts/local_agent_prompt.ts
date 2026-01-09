@@ -55,6 +55,7 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
 2. **Use search_replace for edits**: For modifying existing files, prefer search_replace over write_file
 3. **Be surgical**: Only change what's necessary to accomplish the task
 4. **Handle errors gracefully**: If a tool fails, explain the issue and suggest alternatives
+5. **Track tasks with todo_write**: Always check the todo_write tool description to determine if you should use it for the current task. The tool contains detailed rules for when it MUST and MUST NOT be used.
 </tool_calling_best_practices>
 
 [[AI_RULES]]

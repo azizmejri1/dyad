@@ -139,6 +139,17 @@ export class IpcClient {
   private mcpConsentHandlers: Map<string, (payload: any) => void>;
   private agentConsentHandlers: Map<string, (payload: any) => void>;
   private telemetryEventHandlers: Set<(payload: TelemetryEventPayload) => void>;
+  private todoUpdateHandlers: Set<
+    (payload: {
+      chatId: number;
+      todos: {
+        id: string;
+        description: string;
+        status: string;
+        dependency?: string;
+      }[];
+    }) => void
+  >;
   // Global handlers called for any chat stream completion (used for cleanup)
   private globalChatStreamEndHandlers: Set<(chatId: number) => void>;
   private constructor() {
@@ -149,6 +160,7 @@ export class IpcClient {
     this.mcpConsentHandlers = new Map();
     this.agentConsentHandlers = new Map();
     this.telemetryEventHandlers = new Set();
+    this.todoUpdateHandlers = new Set();
     this.globalChatStreamEndHandlers = new Set();
     // Set up listeners for stream events
     this.ipcRenderer.on("chat:response:chunk", (data) => {
@@ -302,6 +314,30 @@ export class IpcClient {
       if (payload && typeof payload === "object" && "eventName" in payload) {
         for (const handler of this.telemetryEventHandlers) {
           handler(payload as TelemetryEventPayload);
+        }
+      }
+    });
+
+    // Todo update events from main to renderer
+    this.ipcRenderer.on("todo:update", (payload) => {
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "chatId" in payload &&
+        "todos" in payload
+      ) {
+        for (const handler of this.todoUpdateHandlers) {
+          handler(
+            payload as {
+              chatId: number;
+              todos: {
+                id: string;
+                description: string;
+                status: string;
+                dependency?: string;
+              }[];
+            },
+          );
         }
       }
     });
@@ -1502,5 +1538,23 @@ export class IpcClient {
 
   public async clearLogs(appId: number): Promise<void> {
     await this.ipcRenderer.invoke("clear-logs", { appId });
+  }
+
+  // --- Todo Updates ---
+  public onTodoUpdate(
+    handler: (payload: {
+      chatId: number;
+      todos: {
+        id: string;
+        description: string;
+        status: string;
+        dependency?: string;
+      }[];
+    }) => void,
+  ): () => void {
+    this.todoUpdateHandlers.add(handler);
+    return () => {
+      this.todoUpdateHandlers.delete(handler);
+    };
   }
 }

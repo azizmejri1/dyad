@@ -63,6 +63,7 @@ const DYAD_CUSTOM_TAGS = [
   "dyad-database-schema",
   "dyad-supabase-table-schema",
   "dyad-supabase-project-info",
+  "dyad-todo",
 ];
 
 interface DyadMarkdownParserProps {
@@ -600,6 +601,9 @@ function renderCustomTag(
 
     case "dyad-chat-summary":
       // Don't render anything for dyad-chat-summary
+      return null;
+
+    case "dyad-todo":
       return null;
 
     case "dyad-command":

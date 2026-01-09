@@ -177,6 +177,8 @@ const validReceiveChannels = [
   "agent-tool:consent-request",
   // Telemetry events from main to renderer
   "telemetry:event",
+  // Todo updates
+  "todo:update",
 ] as const;
 
 type ValidInvokeChannel = (typeof validInvokeChannels)[number];

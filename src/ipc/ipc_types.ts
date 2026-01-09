@@ -35,6 +35,21 @@ export interface SecurityReviewResult {
   chatId: number;
 }
 
+// --- TODO Types ---
+export type TodoStatus = "pending" | "in_progress" | "completed" | "blocked";
+
+export interface TodoItem {
+  id: string;
+  description: string;
+  status: TodoStatus;
+  dependency?: string;
+}
+
+export interface TodoUpdateEvent {
+  chatId: number;
+  todos: TodoItem[];
+}
+
 export interface RespondToAppInputParams {
   appId: number;
   response: string;

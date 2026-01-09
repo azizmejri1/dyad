@@ -63,6 +63,8 @@ import { useSummarizeInNewChat } from "./SummarizeInNewChatButton";
 import { ChatInputControls } from "../ChatInputControls";
 import { ChatErrorBox } from "./ChatErrorBox";
 import { AgentConsentBanner } from "./AgentConsentBanner";
+import { TodoList } from "./TodoList";
+import { todosByChatIdAtom } from "@/atoms/todoAtoms";
 import {
   selectedComponentsPreviewAtom,
   previewIframeRefAtom,
@@ -162,6 +164,19 @@ export function ChatInput({ chatId }: { chatId?: number }) {
       setShowError(true);
     }
   }, [error]);
+
+  // Subscribe to todo updates from the main process
+  const setTodosById = useSetAtom(todosByChatIdAtom);
+  useEffect(() => {
+    const unsubscribe = IpcClient.getInstance().onTodoUpdate((payload) => {
+      setTodosById((prev) => {
+        const next = new Map(prev);
+        next.set(payload.chatId, payload.todos as any);
+        return next;
+      });
+    });
+    return unsubscribe;
+  }, [setTodosById]);
 
   const fetchChatMessages = useCallback(async () => {
     if (!chatId) {
@@ -349,6 +364,10 @@ export function ChatInput({ chatId }: { chatId?: number }) {
                 );
               }}
             />
+          )}
+          {/* Show todo list for local-agent mode */}
+          {settings.selectedChatMode === "local-agent" && (
+            <TodoList chatId={chatId} />
           )}
           {/* Only render ChatInputActions if proposal is loaded and no pending consent */}
           {!pendingAgentConsent &&
