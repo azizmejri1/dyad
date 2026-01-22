@@ -1,5 +1,9 @@
 import { useCallback, useEffect } from "react";
-import type { Message, FileAttachment } from "@/ipc/ipc_types";
+import type {
+  Message,
+  FileAttachment,
+  ComponentSelection,
+} from "@/ipc/ipc_types";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   chatErrorByIdAtom,
@@ -82,7 +86,7 @@ export function useStreamChat({
       chatId: number;
       redo?: boolean;
       attachments?: FileAttachment[];
-      selectedComponents?: any[];
+      selectedComponents?: ComponentSelection[];
       onSettled?: () => void;
     }) => {
       if (
@@ -179,9 +183,6 @@ export function useStreamChat({
             refreshVersions();
             invalidateTokenCount();
             onSettled?.();
-
-            invalidateTokenCount();
-            onSettled?.();
           },
           onError: (errorMessage: string) => {
             // Remove from pending set now that stream ended with error
@@ -241,14 +242,16 @@ export function useStreamChat({
     ],
   );
 
-  // Process queued message when streaming ends
+  // Process queued message when streaming ends successfully
   useEffect(() => {
     if (!chatId || !shouldProcessQueue) return;
 
     const queuedMessage = queuedMessageById.get(chatId);
     const isStreaming = isStreamingById.get(chatId);
+    const hasError = errorById.get(chatId);
 
-    if (queuedMessage && !isStreaming) {
+    // Only process queue if streaming ended successfully (no error)
+    if (queuedMessage && !isStreaming && !hasError) {
       // Clear queue first to prevent loops
       setQueuedMessageById((prev) => {
         const next = new Map(prev);
@@ -268,6 +271,7 @@ export function useStreamChat({
     chatId,
     queuedMessageById,
     isStreamingById,
+    errorById,
     streamMessage,
     setQueuedMessageById,
   ]);
@@ -300,11 +304,10 @@ export function useStreamChat({
         : null,
     queueMessage: (message: {
       prompt: string;
-      attachments?: any[];
-      selectedComponents?: any[];
+      attachments?: FileAttachment[];
+      selectedComponents?: ComponentSelection[];
     }) => {
       if (chatId === undefined) return;
-      console.log("[CHAT] Queuing message for chat:", chatId, message);
       setQueuedMessageById((prev) => {
         const next = new Map(prev);
         next.set(chatId, message);

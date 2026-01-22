@@ -1,4 +1,9 @@
-import type { FileAttachment, Message, AgentTodo } from "@/ipc/ipc_types";
+import type {
+  FileAttachment,
+  Message,
+  AgentTodo,
+  ComponentSelection,
+} from "@/ipc/ipc_types";
 import { atom } from "jotai";
 
 // Per-chat atoms implemented with maps keyed by chatId
@@ -33,7 +38,7 @@ export const pendingAgentConsentsAtom = atom<PendingAgentConsent[]>([]);
 export interface QueuedMessage {
   prompt: string;
   attachments?: FileAttachment[];
-  selectedComponents?: any[];
+  selectedComponents?: ComponentSelection[];
 }
 
 export const queuedMessageByIdAtom = atom<Map<number, QueuedMessage>>(
