@@ -8,7 +8,7 @@ import { useLoadApps } from "@/hooks/useLoadApps";
 import { useSettings } from "@/hooks/useSettings";
 import { SetupBanner } from "@/components/SetupBanner";
 import { isPreviewOpenAtom } from "@/atoms/viewAtoms";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useStreamChat } from "@/hooks/useStreamChat";
 import { HomeChatInput } from "@/components/chat/HomeChatInput";
 import { usePostHog } from "posthog-js/react";
@@ -39,7 +39,7 @@ import {
   ManageDyadProButton,
   SetupDyadProButton,
 } from "@/components/ProBanner";
-import { hasDyadProKey } from "@/lib/schemas";
+import { hasDyadProKey, getEffectiveDefaultChatMode } from "@/lib/schemas";
 
 // Adding an export for attachments
 export interface HomeSubmitOptions {
@@ -139,6 +139,18 @@ export default function HomePage() {
     }
   }, [appId, navigate]);
 
+  // Apply default chat mode when navigating to home page
+  const hasAppliedDefaultChatMode = useRef(false);
+  useEffect(() => {
+    if (settings && !hasAppliedDefaultChatMode.current) {
+      hasAppliedDefaultChatMode.current = true;
+      const effectiveDefaultMode = getEffectiveDefaultChatMode(settings);
+      if (settings.selectedChatMode !== effectiveDefaultMode) {
+        updateSettings({ selectedChatMode: effectiveDefaultMode });
+      }
+    }
+  }, [settings, updateSettings]);
+
   const handleSubmit = async (options?: HomeSubmitOptions) => {
     const attachments = options?.attachments || [];
 
@@ -157,6 +169,14 @@ export default function HomePage() {
         await neonTemplateHook({
           appId: result.app.id,
           appName: result.app.name,
+        });
+      }
+
+      // Apply selected theme to the new app (if one is set)
+      if (settings?.selectedThemeId) {
+        await IpcClient.getInstance().setAppTheme({
+          appId: result.app.id,
+          themeId: settings.selectedThemeId || null,
         });
       }
 
