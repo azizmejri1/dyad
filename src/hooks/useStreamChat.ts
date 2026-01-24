@@ -20,7 +20,7 @@ import { useChats } from "./useChats";
 import { useLoadApp } from "./useLoadApp";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
 import { useVersions } from "./useVersions";
-import { showExtraFilesToast } from "@/lib/toast";
+import { showExtraFilesToast, showWarning } from "@/lib/toast";
 import { useSearch } from "@tanstack/react-router";
 import { useRunApp } from "./useRunApp";
 import { useCountTokens } from "./useCountTokens";
@@ -259,6 +259,8 @@ export function useStreamChat({
         return next;
       });
 
+      posthog.capture("chat:submit", { chatMode: settings?.selectedChatMode });
+
       // Send the message
       streamMessage({
         prompt: queuedMessage.prompt,
@@ -274,6 +276,8 @@ export function useStreamChat({
     errorById,
     streamMessage,
     setQueuedMessageById,
+    posthog,
+    settings?.selectedChatMode,
   ]);
 
   return {
@@ -306,13 +310,21 @@ export function useStreamChat({
       prompt: string;
       attachments?: FileAttachment[];
       selectedComponents?: ComponentSelection[];
-    }) => {
-      if (chatId === undefined) return;
+    }): boolean => {
+      if (chatId === undefined) return false;
+      const existingMessage = queuedMessageById.get(chatId);
+      if (existingMessage) {
+        showWarning(
+          "A message is already queued. Wait for it to be sent or clear it.",
+        );
+        return false;
+      }
       setQueuedMessageById((prev) => {
         const next = new Map(prev);
         next.set(chatId, message);
         return next;
       });
+      return true;
     },
     clearQueuedMessage: () => {
       if (chatId === undefined) return;
