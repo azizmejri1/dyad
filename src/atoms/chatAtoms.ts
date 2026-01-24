@@ -3,7 +3,7 @@ import type {
   Message,
   AgentTodo,
   ComponentSelection,
-} from "@/ipc/ipc_types";
+} from "@/ipc/types";
 import { atom } from "jotai";
 
 // Per-chat atoms implemented with maps keyed by chatId

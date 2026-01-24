@@ -1,9 +1,5 @@
 import { useCallback, useEffect } from "react";
-import type {
-  Message,
-  FileAttachment,
-  ComponentSelection,
-} from "@/ipc/ipc_types";
+import type { FileAttachment, ComponentSelection } from "@/ipc/types";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   chatErrorByIdAtom,
@@ -16,7 +12,7 @@ import {
 } from "@/atoms/chatAtoms";
 import { ipc } from "@/ipc/types";
 import { isPreviewOpenAtom } from "@/atoms/viewAtoms";
-import type { ChatResponseEnd } from "@/ipc/types";
+import type { ChatResponseEnd, ChatAttachment } from "@/ipc/types";
 import { useChats } from "./useChats";
 import { useLoadApp } from "./useLoadApp";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
