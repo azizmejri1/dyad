@@ -1,5 +1,5 @@
 import React from "react";
-import type { Message } from "@/ipc/ipc_types";
+import type { Message } from "@/ipc/types";
 import { forwardRef, useState, useCallback, useMemo } from "react";
 import { Virtuoso } from "react-virtuoso";
 import ChatMessage from "./ChatMessage";
@@ -127,8 +127,7 @@ function FooterComponent({ context }: { context?: FooterContext }) {
                             }
                           : undefined,
                       });
-                      const chat =
-                        await IpcClient.getInstance().getChat(selectedChatId);
+                      const chat = await ipc.chat.getChat(selectedChatId);
                       setMessagesById((prev) => {
                         const next = new Map(prev);
                         next.set(selectedChatId, chat.messages);
@@ -188,8 +187,7 @@ function FooterComponent({ context }: { context?: FooterContext }) {
                       });
                       shouldRedo = false;
                     } else {
-                      const chat =
-                        await IpcClient.getInstance().getChat(selectedChatId);
+                      const chat = await ipc.chat.getChat(selectedChatId);
                       if (chat.initialCommitHash) {
                         console.debug(
                           "Reverting to initial commit hash",
