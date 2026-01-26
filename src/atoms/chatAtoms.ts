@@ -44,5 +44,11 @@ export interface QueuedMessage {
 export const queuedMessageByIdAtom = atom<Map<number, QueuedMessage>>(
   new Map(),
 );
+
+// Tracks whether the last stream for a chat completed successfully (via onEnd, not cancelled or errored)
+// This is used to safely process the queue only when we're certain the stream finished normally
+export const streamCompletedSuccessfullyByIdAtom = atom<Map<number, boolean>>(
+  new Map(),
+);
 // Agent todos per chat
 export const agentTodosByChatIdAtom = atom<Map<number, AgentTodo[]>>(new Map());
