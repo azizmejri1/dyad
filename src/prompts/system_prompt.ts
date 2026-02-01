@@ -511,6 +511,7 @@ export const constructSystemPrompt = ({
   enableTurboEditsV2,
   themePrompt,
   readOnly,
+  basicAgentMode,
 }: {
   aiRules: string | undefined;
   chatMode?: "build" | "ask" | "agent" | "local-agent" | "plan";
@@ -518,13 +519,18 @@ export const constructSystemPrompt = ({
   themePrompt?: string;
   /** If true, use read-only mode for local-agent (ask mode with tools) */
   readOnly?: boolean;
+  /** If true, use basic agent mode (free tier with limited tools) */
+  basicAgentMode?: boolean;
 }) => {
   if (chatMode === "plan") {
     return constructPlanModePrompt(aiRules, themePrompt);
   }
 
   if (chatMode === "local-agent") {
-    return constructLocalAgentPrompt(aiRules, themePrompt, { readOnly });
+    return constructLocalAgentPrompt(aiRules, themePrompt, {
+      readOnly,
+      basicAgentMode,
+    });
   }
 
   let systemPrompt = getSystemPromptForChatMode({
