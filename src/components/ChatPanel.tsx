@@ -119,8 +119,6 @@ export function ChatPanel({
   );
 
   useEffect(() => {
-    const streamCount = chatId ? (streamCountById.get(chatId) ?? 0) : 0;
-    console.log("streamCount - scrolling to bottom", streamCount);
     scrollToBottom();
   }, [chatId, chatId ? (streamCountById.get(chatId) ?? 0) : 0]);
 

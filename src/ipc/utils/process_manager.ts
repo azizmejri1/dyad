@@ -1,7 +1,9 @@
 import { ChildProcess, spawn } from "node:child_process";
 import treeKill from "tree-kill";
+import log from "electron-log";
 
-// Define a type for the value stored in runningApps
+const logger = log.scope("process_manager");
+
 export interface RunningAppInfo {
   process: ChildProcess;
   processId: number;
@@ -9,12 +11,9 @@ export interface RunningAppInfo {
   containerName?: string;
 }
 
-// Store running app processes
 export const runningApps = new Map<number, RunningAppInfo>();
-// Global counter for process IDs
 let processCounterValue = 0;
 
-// Getter and setter for processCounter to allow modification from outside
 export const processCounter = {
   get value(): number {
     return processCounterValue;
@@ -35,50 +34,34 @@ export const processCounter = {
  */
 export function killProcess(process: ChildProcess): Promise<void> {
   return new Promise<void>((resolve) => {
-    // Add timeout to prevent hanging
     const timeout = setTimeout(() => {
-      console.warn(
-        `Timeout waiting for process (PID: ${process.pid}) to close. Force killing may be needed.`,
+      logger.warn(
+        `Timeout waiting for process (PID: ${process.pid}) to close.`,
       );
       resolve();
-    }, 5000); // 5-second timeout
+    }, 5000);
 
-    process.on("close", (code, signal) => {
+    process.on("close", (_code, _signal) => {
       clearTimeout(timeout);
-      console.log(
-        `Received 'close' event for process (PID: ${process.pid}) with code ${code}, signal ${signal}.`,
-      );
       resolve();
     });
 
-    // Handle potential errors during kill/close sequence
     process.on("error", (err) => {
       clearTimeout(timeout);
-      console.error(
+      logger.error(
         `Error during stop sequence for process (PID: ${process.pid}): ${err.message}`,
       );
       resolve();
     });
 
-    // Ensure PID exists before attempting to kill
     if (process.pid) {
-      // Use tree-kill to terminate the entire process tree
-      console.log(
-        `Attempting to tree-kill process tree starting at PID ${process.pid}.`,
-      );
       treeKill(process.pid, "SIGTERM", (err: Error | undefined) => {
         if (err) {
-          console.warn(
-            `tree-kill error for PID ${process.pid}: ${err.message}`,
-          );
-        } else {
-          console.log(
-            `tree-kill signal sent successfully to PID ${process.pid}.`,
-          );
+          logger.warn(`tree-kill error for PID ${process.pid}: ${err.message}`);
         }
       });
     } else {
-      console.warn(`Cannot tree-kill process: PID is undefined.`);
+      logger.warn(`Cannot tree-kill process: PID is undefined.`);
     }
   });
 }
@@ -138,12 +121,5 @@ export function removeAppIfCurrentProcess(
   const currentAppInfo = runningApps.get(appId);
   if (currentAppInfo && currentAppInfo.process === process) {
     runningApps.delete(appId);
-    console.log(
-      `Removed app ${appId} (processId ${currentAppInfo.processId}) from running map. Current size: ${runningApps.size}`,
-    );
-  } else {
-    console.log(
-      `App ${appId} process was already removed or replaced in running map. Ignoring.`,
-    );
   }
 }

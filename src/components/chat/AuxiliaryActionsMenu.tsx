@@ -77,7 +77,7 @@ export function AuxiliaryActionsMenu({
 
   // Compute visible custom themes: selected custom theme + up to 3 others
   const visibleCustomThemes = useMemo(() => {
-    const MAX_VISIBLE = 4; // selected + 3 others
+    const MAX_VISIBLE = 4;
 
     // Check if current theme is a custom theme
     const selectedCustomTheme = customThemes.find(

@@ -147,8 +147,7 @@ export function ProviderSettingsPage({ provider }: ProviderSettingsPageProps) {
         }
       }
       await updateSettings(settingsUpdate);
-      setApiKeyInput(""); // Clear input on success
-      // Optionally show a success message
+      setApiKeyInput("");
     } catch (error: any) {
       console.error("Error saving API key:", error);
       setSaveError(error.message || "Failed to save API key.");
@@ -171,7 +170,6 @@ export function ProviderSettingsPage({ provider }: ProviderSettingsPageProps) {
           },
         },
       });
-      // Optionally show a success message
     } catch (error: any) {
       console.error("Error deleting API key:", error);
       setSaveError(error.message || "Failed to delete API key.");

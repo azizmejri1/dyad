@@ -301,12 +301,9 @@ export function registerLanguageModelHandlers() {
         .get();
 
       if (!existingProvider) {
-        // If the provider doesn't exist, maybe it was already deleted. Log and return.
         logger.warn(
           `Provider with ID "${providerId}" not found. It might have been deleted already.`,
         );
-        // Optionally, throw new Error(`Provider with ID "${providerId}" not found`);
-        // Deciding to return gracefully instead of throwing an error if not found.
         return;
       }
 

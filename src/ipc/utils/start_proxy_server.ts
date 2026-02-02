@@ -10,9 +10,6 @@ const logger = log.scope("start_proxy_server");
 export async function startProxy(
   targetOrigin: string,
   opts: {
-    // host?: string;
-    // port?: number;
-    // env?: Record<string, string>;
     onStarted?: (proxyUrl: string) => void;
   } = {},
 ) {
@@ -20,11 +17,7 @@ export async function startProxy(
     throw new Error("startProxy: targetOrigin must be absolute http/https URL");
   const port = await findAvailablePort(50_000, 60_000);
   logger.info("Found available port", port);
-  const {
-    // host = "localhost",
-    // env = {}, // additional env vars to pass to the worker
-    onStarted,
-  } = opts;
+  const { onStarted } = opts;
 
   const worker = new Worker(
     path.resolve(__dirname, "..", "..", "worker", "proxy_server.js"),

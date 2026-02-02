@@ -1346,7 +1346,6 @@ export async function gitGetMergeConflicts({
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
   }
-  //throw error("gitGetMergeConflicts requires native Git. Enable native Git in settings.");
   throw new Error(
     "Git conflict detection requires native Git. Enable native Git in settings.",
   );

@@ -238,7 +238,6 @@ function SidebarTrigger({
           variant="ghost"
           size="sidebar"
           className="cursor-pointer ml-1 hover:bg-sidebar"
-          // className={cn("hidden", className)}
           onClick={(event) => {
             onClick?.(event);
             toggleSidebar();

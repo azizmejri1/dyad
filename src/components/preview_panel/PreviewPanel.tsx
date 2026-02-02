@@ -71,19 +71,13 @@ export function PreviewPanel() {
 
     // Check if the selected app ID has changed
     if (selectedAppId !== previousAppId) {
-      // Stop the previously running app, if any
       if (previousAppId !== null) {
-        console.debug("Stopping previous app", previousAppId);
         stopApp(previousAppId);
-        // We don't necessarily nullify the ref here immediately,
-        // let the start of the next app update it or unmount handle it.
       }
 
-      // Start the new app if an ID is selected
       if (selectedAppId !== null) {
-        console.debug("Starting new app", selectedAppId);
-        runApp(selectedAppId); // Consider adding error handling for the promise if needed
-        runningAppIdRef.current = selectedAppId; // Update ref to the new running app ID
+        runApp(selectedAppId);
+        runningAppIdRef.current = selectedAppId;
       } else {
         // If selectedAppId is null, ensure no app is marked as running
         runningAppIdRef.current = null;

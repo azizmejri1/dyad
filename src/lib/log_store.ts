@@ -5,10 +5,7 @@
 
 import type { ConsoleEntry } from "@/ipc/types";
 
-// In-memory log store (per app)
 const logStore = new Map<number, ConsoleEntry[]>();
-
-// Maximum logs per app (circular buffer)
 const MAX_LOGS_PER_APP = 1000;
 
 /**
@@ -18,7 +15,6 @@ export function addLog(entry: ConsoleEntry): void {
   const appLogs = logStore.get(entry.appId) || [];
   appLogs.push(entry);
 
-  // Keep only recent logs (circular buffer)
   if (appLogs.length > MAX_LOGS_PER_APP) {
     appLogs.shift();
   }

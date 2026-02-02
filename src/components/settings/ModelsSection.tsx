@@ -52,11 +52,9 @@ export function ModelsSection({ providerId }: ModelsSectionProps) {
 
   const { mutate: deleteModel, isPending: isDeleting } = useDeleteCustomModel({
     onSuccess: () => {
-      // Optionally show a success toast here
       invalidateModels();
     },
     onError: (error: Error) => {
-      // Optionally show an error toast here
       console.error("Failed to delete model:", error);
     },
   });

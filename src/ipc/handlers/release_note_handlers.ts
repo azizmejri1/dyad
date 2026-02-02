@@ -50,10 +50,6 @@ export function registerReleaseNoteHandlers() {
           `Error fetching release note for version ${version} at ${releaseNoteUrl}:`,
           error,
         );
-        // In case of network errors, etc., assume it doesn't exist or is inaccessible.
-        // Throwing an error here would propagate to the client and might be too disruptive
-        // if the check is just for UI purposes (e.g., showing a link).
-        // Consider if specific errors should be thrown based on requirements.
         return { exists: false };
       }
     },

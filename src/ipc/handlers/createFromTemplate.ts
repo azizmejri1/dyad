@@ -134,7 +134,7 @@ async function cloneRepo(repoUrl: string): Promise<string> {
     logger.info(`Successfully cloned ${repoUrl} to ${cachePath}`);
   } catch (err) {
     logger.error(`Failed to clone ${repoUrl} to ${cachePath}: `, err);
-    throw err; // Re-throw the error after logging
+    throw err;
   }
   return cachePath;
 }
@@ -159,6 +159,6 @@ async function copyRepoToApp(repoCachePath: string, appPath: string) {
       `Error copying repository from ${repoCachePath} to ${appPath}: `,
       err,
     );
-    throw err; // Re-throw the error after logging
+    throw err;
   }
 }

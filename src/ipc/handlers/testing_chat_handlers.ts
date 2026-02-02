@@ -72,8 +72,6 @@ export async function streamTestResponse(
   abortController: AbortController,
   updatedChat: any,
 ): Promise<string> {
-  console.log(`Using canned response for test prompt`);
-
   // Simulate streaming by splitting the response into chunks
   const chunks = testResponse.split(" ");
   let fullResponse = "";

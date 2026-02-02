@@ -68,7 +68,6 @@ export function CreateOrEditPromptDialog({
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-resize textarea function
   const adjustTextareaHeight = () => {
     const textarea = textareaRef.current;
     if (textarea) {
@@ -106,7 +105,6 @@ export function CreateOrEditPromptDialog({
     }
   }, [mode, prompt, prefillData, open]);
 
-  // Auto-resize textarea when content changes
   useEffect(() => {
     adjustTextareaHeight();
   }, [draft.content]);

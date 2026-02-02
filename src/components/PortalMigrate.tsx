@@ -62,7 +62,6 @@ export const PortalMigrate = ({ appId }: PortalMigrateProps) => {
           <Button
             onClick={handleCreateMigration}
             disabled={migrateMutation.isPending}
-            // className="bg-primary hover:bg-purple-700 text-white"
           >
             {migrateMutation.isPending ? (
               <>

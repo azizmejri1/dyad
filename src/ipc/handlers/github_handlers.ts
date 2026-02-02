@@ -319,11 +319,6 @@ export async function prepareLocalBranch({
     throw new Error(errorMessage);
   }
 }
-// function event.sender.send(channel: string, data: any) {
-//   if (currentFlowState?.window && !currentFlowState.window.isDestroyed()) {
-//     currentFlowState.window.webContents.send(channel, data);
-//   }
-// }
 
 async function pollForAccessToken(event: IpcMainInvokeEvent) {
   if (!currentFlowState || !currentFlowState.isPolling) {

@@ -20,9 +20,6 @@ import {
 } from "./atoms/chatAtoms";
 import { queryKeys } from "./lib/queryKeys";
 
-// @ts-ignore
-console.log("Running in mode:", import.meta.env.MODE);
-
 interface MyMeta extends Record<string, unknown> {
   showErrorToast: boolean;
 }
@@ -97,21 +94,17 @@ const posthogClient = posthog.init(
 
 function App() {
   useEffect(() => {
-    // Subscribe to navigation state changes
     const unsubscribe = router.subscribe("onResolved", (navigation) => {
-      // Capture the navigation event in PostHog
       posthog.capture("navigation", {
         toPath: navigation.toLocation.pathname,
         fromPath: navigation.fromLocation?.pathname,
       });
 
-      // Optionally capture as a standard pageview as well
       posthog.capture("$pageview", {
         path: navigation.toLocation.pathname,
       });
     });
 
-    // Clean up subscription when component unmounts
     return () => {
       unsubscribe();
     };

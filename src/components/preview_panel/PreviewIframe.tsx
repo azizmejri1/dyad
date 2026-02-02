@@ -472,8 +472,6 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
       }
 
       if (event.data?.type === "dyad-component-selected") {
-        console.log("Component picked:", event.data);
-
         const component = parseComponentSelection(event.data);
 
         if (!component) return;
@@ -919,8 +917,6 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
 
       // Navigate to the URL
       iframeRef.current.contentWindow.location.href = newUrl;
-
-      // iframeRef.current.src = newUrl;
 
       // Update navigation history
       const newHistory = [

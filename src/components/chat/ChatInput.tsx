@@ -235,9 +235,6 @@ export function ChatInput({ chatId }: { chatId?: number }) {
   const handleApprove = async () => {
     if (!chatId || !messageId || isApproving || isRejecting || isStreaming)
       return;
-    console.log(
-      `Approving proposal for chatId: ${chatId}, messageId: ${messageId}`,
-    );
     setIsApproving(true);
     posthog.capture("chat:approve");
     try {
@@ -274,9 +271,6 @@ export function ChatInput({ chatId }: { chatId?: number }) {
   const handleReject = async () => {
     if (!chatId || !messageId || isApproving || isRejecting || isStreaming)
       return;
-    console.log(
-      `Rejecting proposal for chatId: ${chatId}, messageId: ${messageId}`,
-    );
     setIsRejecting(true);
     posthog.capture("chat:reject");
     try {
