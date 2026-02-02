@@ -28,18 +28,17 @@ export const createChatCompletionHandler =
     }
 
     // Check for local-agent fixture requests (tc=local-agent/*)
-    // This needs to be checked on the first user message, not the last (which might be tool results)
-    const lastUserMessage = messages
-      .slice()
-      .reverse()
-      .find((m: any) => m.role === "user");
-    if (lastUserMessage) {
+    // Check ALL user messages (not just the last) to support multi-user-message
+    // flows like plan mode where the fixture trigger is in the first user message
+    // but subsequent user messages (questionnaire answers, accept) don't contain it.
+    const userMessages = messages.filter((m: any) => m.role === "user");
+    for (const userMessage of userMessages) {
       // Handle both string content and array content (AI SDK format)
       let textContent = "";
-      if (typeof lastUserMessage.content === "string") {
-        textContent = lastUserMessage.content;
-      } else if (Array.isArray(lastUserMessage.content)) {
-        const textPart = lastUserMessage.content.find(
+      if (typeof userMessage.content === "string") {
+        textContent = userMessage.content;
+      } else if (Array.isArray(userMessage.content)) {
+        const textPart = userMessage.content.find(
           (p: any) => p.type === "text",
         );
         if (textPart) {
@@ -48,10 +47,10 @@ export const createChatCompletionHandler =
       }
 
       const localAgentFixture = extractLocalAgentFixture(textContent);
-      console.error(
-        `[local-agent] Checking message: "${textContent.slice(0, 50)}", fixture: ${localAgentFixture}`,
-      );
       if (localAgentFixture) {
+        console.error(
+          `[local-agent] Found fixture in user message: "${textContent.slice(0, 50)}", fixture: ${localAgentFixture}`,
+        );
         return handleLocalAgentFixture(req, res, localAgentFixture);
       }
     }

@@ -477,7 +477,7 @@ export class PageObject {
   }
 
   async selectChatMode(
-    mode: "build" | "ask" | "agent" | "local-agent" | "basic-agent",
+    mode: "build" | "ask" | "agent" | "local-agent" | "basic-agent" | "plan",
   ) {
     await this.page.getByTestId("chat-mode-selector").click();
     const mapping: Record<string, string> = {
@@ -486,6 +486,7 @@ export class PageObject {
       agent: "Build with MCP",
       "local-agent": "Agent v2",
       "basic-agent": "Basic Agent", // For free users
+      plan: "Plan",
     };
     const optionName = mapping[mode];
     await this.page
@@ -497,6 +498,66 @@ export class PageObject {
 
   async selectLocalAgentMode() {
     await this.selectChatMode("local-agent");
+  }
+
+  async selectPlanMode() {
+    await this.selectChatMode("plan");
+  }
+
+  // -- Plan mode helpers --
+
+  /**
+   * Wait for the questionnaire UI to appear above the chat input.
+   */
+  async waitForQuestionnaire() {
+    await expect(
+      this.page.getByRole("button", { name: /Next|Submit/ }),
+    ).toBeVisible({ timeout: Timeout.MEDIUM });
+  }
+
+  /**
+   * Select a radio option in the current questionnaire question.
+   */
+  async selectQuestionnaireRadio(optionLabel: string) {
+    await this.page.getByRole("radio", { name: optionLabel }).click();
+  }
+
+  /**
+   * Fill the text input for the current questionnaire question.
+   */
+  async fillQuestionnaireText(text: string) {
+    await this.page.getByPlaceholder("Type your answer...").fill(text);
+  }
+
+  /**
+   * Click the "Next" button to advance to the next questionnaire question.
+   */
+  async clickQuestionnaireNext() {
+    await this.page.getByRole("button", { name: "Next" }).click();
+  }
+
+  /**
+   * Click the "Submit" button to submit questionnaire answers.
+   * Waits for the chat completion (plan to be written) afterwards.
+   */
+  async clickQuestionnaireSubmit() {
+    await this.page.getByRole("button", { name: /Submit/ }).click();
+  }
+
+  /**
+   * Wait for the plan panel to appear in the preview area.
+   */
+  async waitForPlanPanel() {
+    await expect(
+      this.page.getByRole("button", { name: /Accept Plan/ }),
+    ).toBeVisible({ timeout: Timeout.MEDIUM });
+  }
+
+  /**
+   * Click the "Accept Plan" button in the plan panel.
+   */
+  async clickAcceptPlan() {
+    await this.page.getByRole("button", { name: /Accept Plan/ }).click();
   }
 
   async openContextFilesPicker() {

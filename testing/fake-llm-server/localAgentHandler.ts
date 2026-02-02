@@ -68,6 +68,22 @@ function countToolResultRounds(messages: any[]): number {
 }
 
 /**
+ * Count all assistant messages in the conversation to determine the turn index.
+ * Used for multi-user-message flows (e.g., plan mode) where the user sends
+ * additional messages between agent runs. In these flows, counting tool results
+ * after the last user message would reset to 0 each time the user sends a message.
+ */
+function countAssistantMessages(messages: any[]): number {
+  let count = 0;
+  for (const msg of messages) {
+    if (msg?.role === "assistant") {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Load a fixture file dynamically
  * Tries .ts first (for dev mode with ts-node), then .js
  */
@@ -264,12 +280,14 @@ export async function handleLocalAgentFixture(
     const fixture = await loadFixture(fixtureName);
     const sessionId = getSessionId(messages);
 
-    // Determine which turn we're on based on tool result rounds
-    const toolResultRounds = countToolResultRounds(messages);
-    const turnIndex = toolResultRounds;
+    // Determine which turn we're on based on the fixture's count mode
+    const turnIndex =
+      fixture.turnCountMode === "all-assistant-messages"
+        ? countAssistantMessages(messages)
+        : countToolResultRounds(messages);
 
     console.error(
-      `[local-agent] Loaded fixture: ${fixtureName}, Session: ${sessionId}, Turn: ${turnIndex}, Tool rounds: ${toolResultRounds}`,
+      `[local-agent] Loaded fixture: ${fixtureName}, Session: ${sessionId}, Turn: ${turnIndex}, Mode: ${fixture.turnCountMode ?? "tool-results-after-last-user"}`,
     );
 
     if (turnIndex >= fixture.turns.length) {
