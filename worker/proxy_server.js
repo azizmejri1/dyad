@@ -283,6 +283,23 @@ function buildTargetURL(clientReq) {
 /* 1. Plain HTTP request / response                                        */
 /* ----------------------------------------------------------------------- */
 
+/**
+ * Detect requests for user-defined service worker files.
+ * These must be blocked in the preview to prevent conflicts with Dyad's SW
+ * which would cause constant re-renders and ECONNABORTED errors.
+ * See https://github.com/dyad-sh/dyad/issues/2320
+ */
+function isUserServiceWorkerRequest(req) {
+  const swHeader = req.headers["service-worker"];
+  if (swHeader === "script") {
+    // The browser sends this header when fetching a script for SW registration.
+    // If it's not for our own dyad-sw.js, it's a user SW.
+    const urlPath = req.url.split("?")[0];
+    return urlPath !== "/dyad-sw.js";
+  }
+  return false;
+}
+
 const server = http.createServer((clientReq, clientRes) => {
   // Special handling for Service Worker file
   if (clientReq.url === "/dyad-sw.js") {
@@ -299,6 +316,25 @@ const server = http.createServer((clientReq, clientRes) => {
       clientRes.end("Service Worker file not found");
       return;
     }
+  }
+
+  // Block user service worker file requests to prevent SW conflicts.
+  // Return a no-op script that immediately unregisters itself.
+  if (isUserServiceWorkerRequest(clientReq)) {
+    parentPort?.postMessage(
+      `[proxy-worker] Blocked user service worker request: ${clientReq.url}`,
+    );
+    clientRes.writeHead(200, {
+      "content-type": "application/javascript",
+      "cache-control": "no-cache",
+    });
+    clientRes.end(
+      "// Blocked by Dyad preview – user service workers are disabled to prevent conflicts.\n" +
+        "// See https://github.com/dyad-sh/dyad/issues/2320\n" +
+        "self.addEventListener('install', function() { self.skipWaiting(); });\n" +
+        "self.addEventListener('activate', function(e) { e.waitUntil(self.registration.unregister()); });\n",
+    );
+    return;
   }
 
   let target;
