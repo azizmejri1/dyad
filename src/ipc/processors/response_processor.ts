@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { chats, messages } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
 import fs from "node:fs";
+import os from "node:os";
 import { getDyadAppPath } from "../../paths/paths";
 import path from "node:path";
 import { safeJoin } from "../utils/path_utils";
@@ -31,6 +32,7 @@ import { readSettings } from "@/main/settings";
 import { writeMigrationFile } from "../utils/file_utils";
 import {
   getDyadWriteTags,
+  getDyadCopyTags,
   getDyadRenameTags,
   getDyadDeleteTags,
   getDyadAddDependencyTags,
@@ -158,6 +160,7 @@ export async function processFullResponseActions(
   try {
     // Extract all tags
     const dyadWriteTags = getDyadWriteTags(fullResponse);
+    const dyadCopyTags = getDyadCopyTags(fullResponse);
     const dyadRenameTags = getDyadRenameTags(fullResponse);
     const dyadDeletePaths = getDyadDeleteTags(fullResponse);
     const dyadAddDependencyPackages = getDyadAddDependencyTags(fullResponse);
@@ -478,6 +481,60 @@ export async function processFullResponseActions(
             error: error,
           });
         }
+      }
+    }
+
+    // Process all file copies (from temp attachments into codebase)
+    const tempAttachmentsDir = path.join(os.tmpdir(), "dyad-attachments");
+    for (const tag of dyadCopyTags) {
+      const destPath = safeJoin(appPath, tag.destination);
+
+      // Resolve the source file: first try the source as-is (absolute path),
+      // then look up by original filename in the file uploads map
+      let sourcePath: string | null = null;
+      const resolvedSource = path.resolve(tag.source);
+      if (
+        resolvedSource.startsWith(tempAttachmentsDir + path.sep) &&
+        fs.existsSync(resolvedSource)
+      ) {
+        sourcePath = resolvedSource;
+      } else if (fileUploadsMap) {
+        // Look up by original filename in the uploads map
+        for (const fileInfo of fileUploadsMap.values()) {
+          if (fileInfo.originalName === tag.source) {
+            sourcePath = fileInfo.filePath;
+            break;
+          }
+        }
+      }
+
+      if (!sourcePath || !fs.existsSync(sourcePath)) {
+        logger.warn(
+          `Could not resolve copy source "${tag.source}" to a temp attachment file`,
+        );
+        errors.push({
+          message: `Could not resolve copy source: ${tag.source}`,
+          error: new Error(`Source file not found: ${tag.source}`),
+        });
+        continue;
+      }
+
+      try {
+        // Ensure destination directory exists
+        const dirPath = path.dirname(destPath);
+        fs.mkdirSync(dirPath, { recursive: true });
+
+        // Copy the file
+        fs.copyFileSync(sourcePath, destPath);
+        logger.log(
+          `Successfully copied file: ${sourcePath} -> ${destPath}`,
+        );
+        writtenFiles.push(tag.destination);
+      } catch (error) {
+        errors.push({
+          message: `Failed to copy file to ${tag.destination}`,
+          error: error,
+        });
       }
     }
 

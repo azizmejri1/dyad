@@ -38,6 +38,67 @@ function getSessionId(messages: any[]): string {
 }
 
 /**
+ * Extract temp attachment paths from user messages.
+ * Messages contain patterns like: (temp path: /tmp/dyad-attachments/abc123.png)
+ * Returns a map of original filename -> temp path.
+ */
+function extractTempPaths(messages: any[]): Map<string, string> {
+  const tempPaths = new Map<string, string>();
+  const tempPathRegex =
+    /File to upload to codebase: "([^"]+)" \(temp path: ([^)]+)\)/g;
+
+  for (const msg of messages) {
+    const content = Array.isArray(msg.content)
+      ? msg.content
+          .filter((p: any) => p.type === "text")
+          .map((p: any) => p.text)
+          .join("\n")
+      : typeof msg.content === "string"
+        ? msg.content
+        : "";
+
+    let match;
+    while ((match = tempPathRegex.exec(content)) !== null) {
+      tempPaths.set(match[1], match[2]);
+    }
+  }
+  return tempPaths;
+}
+
+/**
+ * Resolve placeholders in fixture tool call args.
+ * Supports $$TEMP_PATH:filename$$ to substitute actual temp file paths.
+ */
+function resolveFixtureArgs(
+  args: Record<string, unknown>,
+  tempPaths: Map<string, string>,
+): Record<string, unknown> {
+  const resolved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string") {
+      const placeholderMatch = value.match(/^\$\$TEMP_PATH:(.+)\$\$$/);
+      if (placeholderMatch) {
+        const filename = placeholderMatch[1];
+        const tempPath = tempPaths.get(filename);
+        if (tempPath) {
+          resolved[key] = tempPath;
+        } else {
+          console.error(
+            `[local-agent] Could not resolve temp path for filename: ${filename}`,
+          );
+          resolved[key] = value;
+        }
+      } else {
+        resolved[key] = value;
+      }
+    } else {
+      resolved[key] = value;
+    }
+  }
+  return resolved;
+}
+
+/**
  * Check if a message content contains a todo reminder pattern.
  * The todo reminder is injected by the outer loop when there are incomplete todos.
  */
@@ -225,7 +286,11 @@ async function streamTextResponse(
 /**
  * Stream a turn with tool calls
  */
-async function streamToolCallResponse(res: Response, turn: Turn) {
+async function streamToolCallResponse(
+  res: Response,
+  turn: Turn,
+  tempPaths?: Map<string, string>,
+) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -284,8 +349,11 @@ async function streamToolCallResponse(res: Response, turn: Turn) {
         }),
       );
 
-      // Stream arguments gradually
-      const args = JSON.stringify(toolCall.args);
+      // Stream arguments gradually (resolve any temp path placeholders)
+      const resolvedArgs = tempPaths
+        ? resolveFixtureArgs(toolCall.args, tempPaths)
+        : toolCall.args;
+      const args = JSON.stringify(resolvedArgs);
       const argBatchSize = 20;
       for (let i = 0; i < args.length; i += argBatchSize) {
         const part = args.slice(i, i + argBatchSize);
@@ -372,9 +440,12 @@ export async function handleLocalAgentFixture(
       },
     );
 
+    // Extract temp paths from messages for placeholder resolution
+    const tempPaths = extractTempPaths(messages);
+
     // If this turn has tool calls, stream them
     if (turn.toolCalls && turn.toolCalls.length > 0) {
-      await streamToolCallResponse(res, turn);
+      await streamToolCallResponse(res, turn, tempPaths);
     } else {
       // Text-only turn
       await streamTextResponse(res, turn.text || "Done.", turn.usage);

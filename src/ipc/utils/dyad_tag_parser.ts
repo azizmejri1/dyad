@@ -50,6 +50,49 @@ export function getDyadWriteTags(fullResponse: string): {
   return tags;
 }
 
+export function getDyadCopyTags(fullResponse: string): {
+  source: string;
+  destination: string;
+  description?: string;
+}[] {
+  const dyadCopyRegex =
+    /<dyad-copy([^>]*)>([\s\S]*?)<\/dyad-copy>/gi;
+  const sourceRegex = /source="([^"]+)"/;
+  const destinationRegex = /destination="([^"]+)"/;
+  const descriptionRegex = /description="([^"]+)"/;
+
+  let match;
+  const tags: {
+    source: string;
+    destination: string;
+    description?: string;
+  }[] = [];
+
+  while ((match = dyadCopyRegex.exec(fullResponse)) !== null) {
+    const attributesString = match[1] || "";
+
+    const sourceMatch = sourceRegex.exec(attributesString);
+    const destinationMatch = destinationRegex.exec(attributesString);
+    const descriptionMatch = descriptionRegex.exec(attributesString);
+
+    if (sourceMatch?.[1] && destinationMatch?.[1]) {
+      tags.push({
+        source: unescapeXmlAttr(sourceMatch[1]),
+        destination: normalizePath(unescapeXmlAttr(destinationMatch[1])),
+        description: descriptionMatch?.[1]
+          ? unescapeXmlAttr(descriptionMatch[1])
+          : undefined,
+      });
+    } else {
+      logger.warn(
+        "Found <dyad-copy> tag without valid 'source' and 'destination' attributes:",
+        match[0],
+      );
+    }
+  }
+  return tags;
+}
+
 export function getDyadRenameTags(fullResponse: string): {
   from: string;
   to: string;

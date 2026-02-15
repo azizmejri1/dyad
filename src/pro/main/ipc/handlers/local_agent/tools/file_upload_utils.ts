@@ -1,8 +1,9 @@
 /**
  * Shared utility for resolving file upload IDs to actual file content.
- * When users upload files with "upload-to-codebase" attachment type,
- * the LLM receives a file ID (e.g., DYAD_ATTACHMENT_0) instead of the raw content.
- * This utility replaces those IDs with the actual file content when writing files.
+ *
+ * @deprecated New conversations should use the copy_file tool instead of
+ * synthetic DYAD_ATTACHMENT IDs. This utility is kept for backward compatibility
+ * with existing conversations that still use the legacy mechanism.
  */
 
 import fs from "node:fs";
@@ -55,8 +56,9 @@ export async function resolveFileUploadContent(
 
   try {
     const fileContent = await readFile(fileInfo.filePath);
-    logger.log(
-      `Replaced file ID ${trimmedContent} with content from ${fileInfo.originalName}`,
+    logger.warn(
+      `[DEPRECATED] Resolved file ID ${trimmedContent} via legacy DYAD_ATTACHMENT mechanism. ` +
+        `New conversations should use the copy_file tool instead.`,
     );
     return {
       content: fileContent,

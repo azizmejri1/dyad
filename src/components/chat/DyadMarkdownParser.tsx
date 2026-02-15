@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { DyadWrite } from "./DyadWrite";
+import { DyadCopy } from "./DyadCopy";
 import { DyadRename } from "./DyadRename";
 import { DyadDelete } from "./DyadDelete";
 import { DyadAddDependency } from "./DyadAddDependency";
@@ -44,6 +45,7 @@ import { unescapeXmlAttr, unescapeXmlContent } from "../../../shared/xmlEscape";
 
 const DYAD_CUSTOM_TAGS = [
   "dyad-write",
+  "dyad-copy",
   "dyad-rename",
   "dyad-delete",
   "dyad-add-dependency",
@@ -443,6 +445,22 @@ function renderCustomTag(
         >
           {content}
         </DyadWrite>
+      );
+
+    case "dyad-copy":
+      return (
+        <DyadCopy
+          node={{
+            properties: {
+              source: attributes.source || "",
+              destination: attributes.destination || "",
+              description: attributes.description || "",
+              state: getState({ isStreaming, inProgress }),
+            },
+          }}
+        >
+          {content}
+        </DyadCopy>
       );
 
     case "dyad-rename":
