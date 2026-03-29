@@ -76,9 +76,14 @@ function stripAttachmentInfo(content: string): string {
 interface ChatMessageProps {
   message: Message;
   isLastMessage: boolean;
+  isCancelledPrompt?: boolean;
 }
 
-const ChatMessage = ({ message, isLastMessage }: ChatMessageProps) => {
+const ChatMessage = ({
+  message,
+  isLastMessage,
+  isCancelledPrompt,
+}: ChatMessageProps) => {
   const { isStreaming } = useStreamChat();
   const appId = useAtomValue(selectedAppIdAtom);
   const { versions: liveVersions } = useVersions(appId);
@@ -129,6 +134,9 @@ const ChatMessage = ({ message, isLastMessage }: ChatMessageProps) => {
     }
   };
 
+  const isCancelled =
+    message.content.endsWith("[Response cancelled by user]") ||
+    !!isCancelledPrompt;
   const userTextContent =
     message.role === "user" ? stripAttachmentInfo(message.content) : "";
   const attachments =
@@ -141,7 +149,9 @@ const ChatMessage = ({ message, isLastMessage }: ChatMessageProps) => {
     <div
       className={`flex ${message.role === "assistant" ? "justify-start" : "justify-end"}`}
     >
-      <div className={`mt-2 w-full max-w-3xl mx-auto group`}>
+      <div
+        className={`mt-2 w-full max-w-3xl mx-auto group ${isCancelled ? "opacity-50" : ""}`}
+      >
         {/* Show message box for assistant messages or user messages with text */}
         {(message.role === "assistant" || hasUserText) && (
           <div

@@ -686,12 +686,31 @@ ${componentSnippet}
         );
 
         // Prepare message history for the AI
-        const messageHistory = updatedChat.messages.map((message) => ({
+        const messageHistoryRaw = updatedChat.messages.map((message) => ({
           role: message.role as "user" | "assistant" | "system",
           content: message.content,
           sourceCommitHash: message.sourceCommitHash,
           commitHash: message.commitHash,
         }));
+
+        // Filter out cancelled message pairs (user prompt + cancelled assistant response)
+        // so the AI doesn't try to reconcile cancelled/incorrect prompts with new ones.
+        const messageHistory = messageHistoryRaw.filter((msg, index) => {
+          if (msg.content.endsWith("[Response cancelled by user]")) {
+            return false;
+          }
+          // Also filter the preceding user message that triggered the cancelled response
+          if (
+            index + 1 < messageHistoryRaw.length &&
+            messageHistoryRaw[index + 1].content.endsWith(
+              "[Response cancelled by user]",
+            ) &&
+            msg.role === "user"
+          ) {
+            return false;
+          }
+          return true;
+        });
 
         // The DB stores display-friendly versions (short /implement-plan= form
         // or clean <dyad-attachment> tags). Replace the last user message with the

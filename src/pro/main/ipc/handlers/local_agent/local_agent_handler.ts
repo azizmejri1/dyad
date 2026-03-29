@@ -217,9 +217,27 @@ function buildChatMessageHistory(
     reorderedMessages.splice(targetIndex, 0, summary);
   }
 
-  return reorderedMessages
+  const filtered = reorderedMessages
     .filter((msg) => !excludedIds?.has(msg.id))
-    .filter((msg) => msg.content || msg.aiMessagesJson)
+    .filter((msg) => msg.content || msg.aiMessagesJson);
+
+  // Filter out cancelled message pairs (user prompt + cancelled assistant response)
+  // so the AI doesn't try to reconcile cancelled/incorrect prompts with new ones.
+  return filtered
+    .filter((msg, index) => {
+      if (msg.content.endsWith("[Response cancelled by user]")) {
+        return false;
+      }
+      // Also filter the preceding user message that triggered the cancelled response
+      if (
+        index + 1 < filtered.length &&
+        filtered[index + 1].content.endsWith("[Response cancelled by user]") &&
+        msg.role === "user"
+      ) {
+        return false;
+      }
+      return true;
+    })
     .flatMap((msg) => parseAiMessagesJson(msg));
 }
 
