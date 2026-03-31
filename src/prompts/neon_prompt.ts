@@ -160,6 +160,11 @@ Important API rules:
 - \`signOut\` is a top-level method on \`authClient\`; use \`authClient.signOut()\`, not \`authClient.auth.signOut()\`.
 - In Next.js server code, call \`auth.getSession()\` with no \`{ headers }\` argument unless you are intentionally using a documented option such as \`query\`.
 
+API-only auth methods (for apps that build their own auth forms instead of using the prebuilt Auth UI):
+- Server: \`auth.signIn.email({ email, password })\`, \`auth.signUp.email({ email, password, name })\`, \`auth.signOut()\`, \`auth.getSession()\`
+- Client: \`authClient.signIn.email({ email, password })\`, \`authClient.signUp.email({ email, password, name })\`, \`authClient.signOut()\`, \`authClient.useSession()\`
+- Use these methods in Route Handlers or Server Actions (server) and client components (client) when the app needs programmatic sign-in/sign-up without the prebuilt \`AuthView\` component.
+
 Client usage example:
 \`\`\`tsx
 'use client';
@@ -197,10 +202,12 @@ export default async function DashboardPage() {
 
 ### Request-Boundary File
 
-Protect routes with \`auth.middleware(...)\`, but reuse the project's existing request-boundary file:
-- Current Neon quickstarts use \`proxy.ts\`
-- Older Next.js apps may already use \`middleware.ts\`
-- Reuse whichever file the app already has and do not create both
+Protect routes with \`auth.middleware(...)\`. Next.js has deprecated \`middleware.ts\` in favor of \`proxy.ts\`, so prefer \`proxy.ts\` for new projects:
+- For new projects, create \`proxy.ts\` at the project root
+- If the project already has a \`middleware.ts\`, reuse it instead — do not create both
+- Always export a \`config.matcher\` to scope the middleware to the routes that need protection
+
+\`proxy.ts\` (or \`middleware.ts\` in older projects)
 
 \`\`\`typescript
 import { auth } from '@/lib/auth/server';
@@ -208,6 +215,10 @@ import { auth } from '@/lib/auth/server';
 export default auth.middleware({
   loginUrl: '/auth/sign-in',
 });
+
+export const config = {
+  matcher: ['/account/:path*'],
+};
 \`\`\`
 
 ### Neon Auth UI Path
