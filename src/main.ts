@@ -181,6 +181,21 @@ export async function onReady() {
   });
 
   await onFirstRunMaybe(settings);
+
+  // Install React Developer Tools extension in development mode
+  if (!app.isPackaged) {
+    try {
+      const { default: installExtension, REACT_DEVELOPER_TOOLS } =
+        await import("electron-devtools-installer");
+      await installExtension(REACT_DEVELOPER_TOOLS, {
+        loadExtensionOptions: { allowFileAccess: true },
+      });
+      logger.info("React DevTools extension installed");
+    } catch (err) {
+      logger.warn("Failed to install React DevTools extension:", err);
+    }
+  }
+
   createWindow();
   createApplicationMenu();
 
