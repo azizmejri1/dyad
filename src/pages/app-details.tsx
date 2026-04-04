@@ -36,7 +36,7 @@ import {
 import { GitHubConnector } from "@/components/GitHubConnector";
 import { SupabaseConnector } from "@/components/SupabaseConnector";
 import { showError, showSuccess } from "@/lib/toast";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { invalidateAppQuery } from "@/hooks/useLoadApp";
@@ -46,6 +46,7 @@ import { AppUpgrades } from "@/components/AppUpgrades";
 import { CapacitorControls } from "@/components/CapacitorControls";
 import { GithubCollaboratorManager } from "@/components/GithubCollaboratorManager";
 import { useAddAppToFavorite } from "@/hooks/useAddAppToFavorite";
+import { queryKeys } from "@/lib/queryKeys";
 
 export default function AppDetailsPage() {
   const navigate = useNavigate();
@@ -82,6 +83,12 @@ export default function AppDetailsPage() {
 
   // Get the appId from search params and find the corresponding app
   const appId = search.appId ? Number(search.appId) : null;
+
+  const { data: screenshotData } = useQuery({
+    queryKey: queryKeys.apps.screenshot({ appId }),
+    queryFn: () => ipc.app.getAppScreenshot({ appId: appId! }),
+    enabled: !!appId,
+  });
   const selectedApp = appId ? appsList.find((app) => app.id === appId) : null;
 
   const handleDeleteApp = async () => {
@@ -373,6 +380,16 @@ export default function AppDetailsPage() {
             </PopoverContent>
           </Popover>
         </div>
+
+        {screenshotData?.url && (
+          <div className="mb-4 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+            <img
+              src={screenshotData.url}
+              alt="App preview"
+              className="w-full max-h-80 object-cover object-top"
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 text-sm mb-4">
           <div>

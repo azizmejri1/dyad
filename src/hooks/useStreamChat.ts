@@ -17,6 +17,7 @@ import {
 } from "@/atoms/chatAtoms";
 import { ipc } from "@/ipc/types";
 import { isPreviewOpenAtom } from "@/atoms/viewAtoms";
+import { pendingScreenshotAppIdAtom } from "@/atoms/previewAtoms";
 import type { ChatResponseEnd, App } from "@/ipc/types";
 import type { ChatSummary } from "@/lib/schemas";
 import { useChats } from "./useChats";
@@ -60,6 +61,7 @@ export function useStreamChat({
   const { refreshVersions } = useVersions(selectedAppId);
   const { refreshAppIframe } = useRunApp();
   const { refetchUserBudget } = useUserBudgetInfo();
+  const setPendingScreenshotAppId = useSetAtom(pendingScreenshotAppIdAtom);
   const { checkProblems } = useCheckProblems(selectedAppId);
   const { settings } = useSettings();
   const setRecentStreamChatIds = useSetAtom(recentStreamChatIdsAtom);
@@ -279,6 +281,9 @@ export function useStreamChat({
                   setIsPreviewOpen(true);
                 }
                 refreshAppIframe();
+                if (selectedAppId) {
+                  setPendingScreenshotAppId(selectedAppId);
+                }
                 if (settings?.enableAutoFixProblems) {
                   checkProblems();
                 }

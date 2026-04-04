@@ -49,6 +49,7 @@ import {
   screenshotDataUrlAtom,
   pendingVisualChangesAtom,
   isRestoringQueuedSelectionAtom,
+  pendingScreenshotAppIdAtom,
 } from "@/atoms/previewAtoms";
 import { isChatPanelHiddenAtom } from "@/atoms/viewAtoms";
 import { ComponentSelection } from "@/ipc/types";
@@ -68,6 +69,7 @@ import { useRunApp } from "@/hooks/useRunApp";
 import { useSettings } from "@/hooks/useSettings";
 import { useShortcut } from "@/hooks/useShortcut";
 import { cn } from "@/lib/utils";
+import { queryKeys } from "@/lib/queryKeys";
 import { normalizePath } from "../../../shared/normalizePath";
 import { showError } from "@/lib/toast";
 import type { DeviceMode } from "@/lib/schemas";
@@ -76,6 +78,7 @@ import { useAttachments } from "@/hooks/useAttachments";
 import { useUserBudgetInfo } from "@/hooks/useUserBudgetInfo";
 import { Annotator } from "@/pro/ui/components/Annotator/Annotator";
 import { VisualEditingToolbar } from "./VisualEditingToolbar";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface ErrorBannerProps {
   error: { message: string; source: "preview-app" | "dyad-app" } | undefined;
@@ -188,6 +191,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const { settings, updateSettings } = useSettings();
   const { userBudget } = useUserBudgetInfo();
   const isProMode = !!userBudget;
+  const queryClient = useQueryClient();
 
   // Preserved URL state (persists across HMR-induced remounts)
   const [preservedUrls, setPreservedUrls] = useAtom(previewCurrentUrlAtom);
@@ -239,6 +243,60 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
 
   const { addAttachments } = useAttachments();
   const setPendingChanges = useSetAtom(pendingVisualChangesAtom);
+  const [pendingScreenshotAppId, setPendingScreenshotAppId] = useAtom(
+    pendingScreenshotAppIdAtom,
+  );
+  const pendingScreenshotAppIdRef = useRef<number | null>(null);
+  // Track the latest screenshot requests so stale responses from earlier reloads
+  // don't get mistaken for annotator screenshots.
+  const pendingCommitScreenshotRequestRef = useRef<{
+    appId: number;
+    requestId: string;
+  } | null>(null);
+  const pendingAnnotatorScreenshotRequestIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync with atom so the message handler always reads the latest value
+  useEffect(() => {
+    pendingScreenshotAppIdRef.current = pendingScreenshotAppId;
+  }, [pendingScreenshotAppId]);
+
+  const requestCommitScreenshot = () => {
+    if (
+      pendingScreenshotAppIdRef.current === null ||
+      pendingScreenshotAppIdRef.current !== selectedAppId ||
+      !iframeRef.current?.contentWindow
+    ) {
+      return;
+    }
+
+    const contentWindow = iframeRef.current.contentWindow;
+    const appId = selectedAppId;
+    // Wait for page animations to finish before capturing.
+    setTimeout(() => {
+      const requestId = crypto.randomUUID();
+      pendingCommitScreenshotRequestRef.current = {
+        appId,
+        requestId,
+      };
+      contentWindow.postMessage(
+        { type: "dyad-take-screenshot", requestId },
+        "*",
+      );
+    }, 3_000);
+  };
+
+  const requestAnnotatorScreenshot = () => {
+    if (!iframeRef.current?.contentWindow) {
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+    pendingAnnotatorScreenshotRequestIdRef.current = requestId;
+    iframeRef.current.contentWindow.postMessage(
+      { type: "dyad-take-screenshot", requestId },
+      "*",
+    );
+  };
 
   // AST Analysis State
   const [isDynamicComponent, setIsDynamicComponent] = useState(false);
@@ -512,6 +570,43 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
           { type: "dyad-pro-mode", enabled: isProMode },
           "*",
         );
+
+        // Take a screenshot if a commit just happened for this app.
+        // Read from ref to avoid stale closure issues.
+        if (
+          pendingScreenshotAppIdRef.current !== null &&
+          pendingScreenshotAppIdRef.current === selectedAppId &&
+          iframeRef.current?.contentWindow
+        ) {
+          requestCommitScreenshot();
+        } else if (selectedAppId !== null && iframeRef.current?.contentWindow) {
+          // No pending commit screenshot — check if the app already has a
+          // screenshot on disk. If not (e.g. iframe was still loading when
+          // earlier commits happened), capture one now.
+          const appId = selectedAppId;
+          const contentWindow = iframeRef.current.contentWindow;
+          ipc.app
+            .getAppScreenshot({ appId })
+            .then((result) => {
+              if (!result.url) {
+                // Wait for page animations to finish before capturing.
+                setTimeout(() => {
+                  const requestId = crypto.randomUUID();
+                  pendingCommitScreenshotRequestRef.current = {
+                    appId,
+                    requestId,
+                  };
+                  contentWindow.postMessage(
+                    { type: "dyad-take-screenshot", requestId },
+                    "*",
+                  );
+                }, 3_000);
+              }
+            })
+            .catch(() => {
+              // Ignore — screenshot check is best-effort
+            });
+        }
         return;
       }
 
@@ -628,11 +723,52 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
       }
 
       if (event.data?.type === "dyad-screenshot-response") {
-        if (event.data.success && event.data.dataUrl) {
-          setScreenshotDataUrl(event.data.dataUrl);
-          setAnnotatorMode(true);
-        } else {
-          showError(event.data.error);
+        const requestId =
+          typeof event.data.requestId === "string"
+            ? event.data.requestId
+            : null;
+        const pendingCommitScreenshotRequest =
+          pendingCommitScreenshotRequestRef.current;
+
+        if (
+          requestId !== null &&
+          pendingCommitScreenshotRequest !== null &&
+          requestId === pendingCommitScreenshotRequest.requestId
+        ) {
+          const appId = pendingCommitScreenshotRequest.appId;
+          pendingCommitScreenshotRequestRef.current = null;
+          if (event.data.success && event.data.dataUrl) {
+            console.log("App screenshot taken for app", appId);
+            // Only clear the pending signal after a successful capture
+            setPendingScreenshotAppId(null);
+            ipc.app
+              .saveAppScreenshot({
+                appId,
+                dataUrl: event.data.dataUrl,
+              })
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: queryKeys.apps.screenshot({ appId }),
+                }),
+              )
+              .catch((err: unknown) => {
+                console.error("Failed to save app screenshot:", err);
+              });
+          }
+          return;
+        }
+
+        if (
+          requestId !== null &&
+          requestId === pendingAnnotatorScreenshotRequestIdRef.current
+        ) {
+          pendingAnnotatorScreenshotRequestIdRef.current = null;
+          if (event.data.success && event.data.dataUrl) {
+            setScreenshotDataUrl(event.data.dataUrl);
+            setAnnotatorMode(true);
+          } else {
+            showError(event.data.error);
+          }
         }
         return;
       }
@@ -799,6 +935,8 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
     setSelectedComponentsPreview,
     setVisualEditingSelectedComponent,
     setPreservedUrls,
+    queryClient,
+    setPendingScreenshotAppId,
   ]);
 
   useEffect(() => {
@@ -859,12 +997,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
       return;
     }
     if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "dyad-take-screenshot",
-        },
-        "*",
-      );
+      requestAnnotatorScreenshot();
     }
   };
 
@@ -1437,6 +1570,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
                     setErrorMessage(undefined);
                     // Note: We don't clear currentIframeUrlRef - it tracks the URL the iframe is showing
                     // This prevents re-renders from accidentally changing the iframe src
+                    requestCommitScreenshot();
                   }}
                   ref={iframeRef}
                   key={reloadKey}
