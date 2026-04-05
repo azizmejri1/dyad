@@ -23,7 +23,10 @@ import {
 } from "@neondatabase/api-client";
 import { retryOnLocked } from "../utils/retryOnLocked";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
-import { updateNeonEnvVars } from "../utils/app_env_var_utils";
+import {
+  updateNeonEnvVars,
+  removeNeonEnvVars,
+} from "../utils/app_env_var_utils";
 import { detectFrameworkType } from "../utils/framework_utils";
 import { getDyadAppPath } from "@/paths/paths";
 
@@ -225,7 +228,7 @@ export function registerNeonHandlers() {
 
       if (
         !developmentBranchResponse.data.branch ||
-        !developmentBranchResponse.data.connection_uris
+        !developmentBranchResponse.data.connection_uris?.length
       ) {
         throw new Error(
           "Failed to create development branch: No branch data returned.",
@@ -255,7 +258,7 @@ export function registerNeonHandlers() {
 
       if (
         !previewBranchResponse.data.branch ||
-        !previewBranchResponse.data.connection_uris
+        !previewBranchResponse.data.connection_uris?.length
       ) {
         throw new Error(
           "Failed to create preview branch: No branch data returned.",
@@ -518,6 +521,13 @@ export function registerNeonHandlers() {
     logger.info(`Unsetting Neon project for app ${appId}`);
 
     try {
+      // Fetch the app record to get the path before clearing DB fields
+      const appRecord = await db
+        .select()
+        .from(apps)
+        .where(eq(apps.id, appId))
+        .limit(1);
+
       await db
         .update(apps)
         .set({
@@ -527,6 +537,18 @@ export function registerNeonHandlers() {
           neonActiveBranchId: null,
         })
         .where(eq(apps.id, appId));
+
+      // Remove Neon-injected env vars from .env.local
+      if (appRecord.length > 0) {
+        try {
+          await removeNeonEnvVars({ appPath: appRecord[0].path });
+        } catch (envError) {
+          logger.warn(
+            `Failed to remove Neon env vars for app ${appId}:`,
+            envError,
+          );
+        }
+      }
 
       logger.info(`Successfully unlinked Neon project from app ${appId}`);
       return { success: true };

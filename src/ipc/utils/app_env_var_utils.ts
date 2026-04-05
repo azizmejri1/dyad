@@ -237,6 +237,34 @@ export async function updateNeonEnvVars({
   await fs.promises.writeFile(getEnvFilePath({ appPath }), envFileContents);
 }
 
+const NEON_ENV_KEYS = [
+  "DATABASE_URL",
+  "POSTGRES_URL",
+  "NEON_AUTH_BASE_URL",
+  "NEON_AUTH_COOKIE_SECRET",
+];
+
+export async function removeNeonEnvVars({
+  appPath,
+}: {
+  appPath: string;
+}): Promise<void> {
+  let envVars: EnvVar[];
+  try {
+    const content = await readEnvFile({ appPath });
+    envVars = parseEnvFile(content);
+  } catch {
+    // File doesn't exist — nothing to clean up
+    return;
+  }
+
+  const filtered = envVars.filter((v) => !NEON_ENV_KEYS.includes(v.key));
+  if (filtered.length === envVars.length) return; // nothing removed
+
+  const envFileContents = serializeEnvFile(filtered);
+  await fs.promises.writeFile(getEnvFilePath({ appPath }), envFileContents);
+}
+
 // Helper function to serialize environment variables to .env.local format
 export function serializeEnvFile(envVars: EnvVar[]): string {
   return envVars
