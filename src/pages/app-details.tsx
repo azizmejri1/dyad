@@ -25,6 +25,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -381,7 +382,7 @@ export default function AppDetailsPage() {
           </Popover>
         </div>
 
-        {screenshotData?.url && (
+        {screenshotData?.url ? (
           <div className="mb-4 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
             <img
               src={screenshotData.url}
@@ -389,6 +390,8 @@ export default function AppDetailsPage() {
               className="w-full max-h-80 object-cover object-top"
             />
           </div>
+        ) : (
+          <Skeleton className="mb-4 h-48 w-full rounded-lg" />
         )}
 
         <div className="grid grid-cols-2 gap-3 text-sm mb-4">

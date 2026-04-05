@@ -176,6 +176,8 @@ const ErrorBanner = ({ error, onDismiss, onAIFix }: ErrorBannerProps) => {
   );
 };
 
+const SCREENSHOT_CAPTURE_DELAY_MS = 3_000;
+
 // Preview iframe component
 export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const selectedAppId = useAtomValue(selectedAppIdAtom);
@@ -260,19 +262,13 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
     pendingScreenshotAppIdRef.current = pendingScreenshotAppId;
   }, [pendingScreenshotAppId]);
 
-  const requestCommitScreenshot = () => {
-    if (
-      pendingScreenshotAppIdRef.current === null ||
-      pendingScreenshotAppIdRef.current !== selectedAppId ||
-      !iframeRef.current?.contentWindow
-    ) {
-      return;
-    }
-
-    const contentWindow = iframeRef.current.contentWindow;
-    const appId = selectedAppId;
+  const captureScreenshot = (appId: number) => {
     // Wait for page animations to finish before capturing.
     setTimeout(() => {
+      // Re-read contentWindow inside the timeout to avoid stale references
+      // (e.g. if the iframe reloads or gets replaced during the delay).
+      const contentWindow = iframeRef.current?.contentWindow;
+      if (!contentWindow) return;
       const requestId = crypto.randomUUID();
       pendingCommitScreenshotRequestRef.current = {
         appId,
@@ -282,7 +278,19 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
         { type: "dyad-take-screenshot", requestId },
         "*",
       );
-    }, 3_000);
+    }, SCREENSHOT_CAPTURE_DELAY_MS);
+  };
+
+  const requestCommitScreenshot = () => {
+    if (
+      pendingScreenshotAppIdRef.current === null ||
+      pendingScreenshotAppIdRef.current !== selectedAppId ||
+      !iframeRef.current?.contentWindow
+    ) {
+      return;
+    }
+
+    captureScreenshot(selectedAppId);
   };
 
   const requestAnnotatorScreenshot = () => {
@@ -584,23 +592,11 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
           // screenshot on disk. If not (e.g. iframe was still loading when
           // earlier commits happened), capture one now.
           const appId = selectedAppId;
-          const contentWindow = iframeRef.current.contentWindow;
           ipc.app
             .getAppScreenshot({ appId })
             .then((result) => {
               if (!result.url) {
-                // Wait for page animations to finish before capturing.
-                setTimeout(() => {
-                  const requestId = crypto.randomUUID();
-                  pendingCommitScreenshotRequestRef.current = {
-                    appId,
-                    requestId,
-                  };
-                  contentWindow.postMessage(
-                    { type: "dyad-take-screenshot", requestId },
-                    "*",
-                  );
-                }, 3_000);
+                captureScreenshot(appId);
               }
             })
             .catch(() => {
@@ -739,7 +735,6 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
           pendingCommitScreenshotRequestRef.current = null;
           if (event.data.success && event.data.dataUrl) {
             console.log("App screenshot taken for app", appId);
-            // Only clear the pending signal after a successful capture
             setPendingScreenshotAppId(null);
             ipc.app
               .saveAppScreenshot({
@@ -754,6 +749,9 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
               .catch((err: unknown) => {
                 console.error("Failed to save app screenshot:", err);
               });
+          } else {
+            console.warn("App screenshot capture failed for app", appId);
+            setPendingScreenshotAppId(null);
           }
           return;
         }
