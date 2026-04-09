@@ -432,6 +432,25 @@ export function ChatInput({ chatId }: { chatId?: number }) {
     [editingQueuedMessageId, removeQueuedMessage, resetEditingState],
   );
 
+  const handleSteerMessage = useCallback(
+    async (id: string) => {
+      if (!chatId) return;
+      const msg = queuedMessages.find((m) => m.id === id);
+      if (!msg) return;
+      const accepted = await ipc.chat.steerMessage({
+        chatId,
+        prompt: msg.prompt,
+      });
+      if (accepted) {
+        if (editingQueuedMessageId === id) {
+          resetEditingState();
+        }
+        removeQueuedMessage(id);
+      }
+    },
+    [chatId, queuedMessages, editingQueuedMessageId, removeQueuedMessage, resetEditingState],
+  );
+
   const handleSubmit = async () => {
     if (
       (!inputValue.trim() &&
@@ -758,6 +777,7 @@ export function ChatInput({ chatId }: { chatId?: number }) {
               onDelete={handleDeleteQueuedMessage}
               onMoveUp={handleMoveUp}
               onMoveDown={handleMoveDown}
+              onSteer={handleSteerMessage}
               isStreaming={isStreaming}
               hasError={!!error}
             />

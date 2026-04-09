@@ -24,6 +24,7 @@ interface QueuedMessagesListProps {
   onDelete: (id: string) => void;
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
+  onSteer?: (id: string) => void;
   isStreaming: boolean;
   hasError: boolean;
 }
@@ -36,6 +37,8 @@ interface QueuedMessageItemRowProps {
   onDelete: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onSteer?: () => void;
+  isStreaming: boolean;
 }
 
 function QueuedMessageItemRow({
@@ -46,6 +49,8 @@ function QueuedMessageItemRow({
   onDelete,
   onMoveUp,
   onMoveDown,
+  onSteer,
+  isStreaming,
 }: QueuedMessageItemRowProps) {
   return (
     <li className="flex items-center gap-2 text-sm py-1.5 px-2 bg-muted/50 rounded group">
@@ -59,6 +64,22 @@ function QueuedMessageItemRow({
 
       {/* Action buttons - visible on hover */}
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        {isStreaming && onSteer && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onSteer}
+                className="p-1 hover:bg-muted rounded cursor-pointer"
+              >
+                <Navigation size={14} className="text-blue-500" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              Steer: send to agent without interrupting
+            </TooltipContent>
+          </Tooltip>
+        )}
         <button
           type="button"
           onClick={onEdit}
@@ -110,6 +131,7 @@ export function QueuedMessagesList({
   onDelete,
   onMoveUp,
   onMoveDown,
+  onSteer,
   isStreaming,
   hasError,
 }: QueuedMessagesListProps) {
@@ -162,6 +184,8 @@ export function QueuedMessagesList({
                 onDelete={() => onDelete(msg.id)}
                 onMoveUp={() => onMoveUp(msg.id)}
                 onMoveDown={() => onMoveDown(msg.id)}
+                onSteer={onSteer ? () => onSteer(msg.id) : undefined}
+                isStreaming={isStreaming}
               />
             ))}
           </ul>
