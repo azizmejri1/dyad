@@ -9,7 +9,13 @@ import {
   ArrowUp,
   ArrowDown,
   Paperclip,
+  Navigation,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 interface QueuedMessagesListProps {

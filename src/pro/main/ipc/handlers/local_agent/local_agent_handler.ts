@@ -64,6 +64,10 @@ import {
   type InjectedMessage,
 } from "./prepare_step_utils";
 import { loadTodos } from "./todo_persistence";
+import {
+  registerSteerCallback,
+  unregisterSteerCallback,
+} from "@/ipc/handlers/chat_stream_handlers";
 import { ensureDyadGitignored } from "@/ipc/handlers/gitignoreUtils";
 import { TOOL_DEFINITIONS } from "./tool_definitions";
 import {
@@ -469,6 +473,11 @@ export async function handleLocalAgentStream(
   // Store injected messages with their insertion index to re-inject at the same spot each step
   const allInjectedMessages: InjectedMessage[] = [];
   const warningMessages: string[] = [];
+
+  // Register steer callback so the frontend can inject messages mid-stream
+  registerSteerCallback(req.chatId, (prompt: string) => {
+    pendingUserMessages.push([{ type: "text", text: prompt }]);
+  });
 
   try {
     // Get model client
@@ -1299,6 +1308,8 @@ export async function handleLocalAgentStream(
         warningMessages.length > 0 ? [...new Set(warningMessages)] : undefined,
     });
     return false; // Error - don't consume quota
+  } finally {
+    unregisterSteerCallback(req.chatId);
   }
 }
 

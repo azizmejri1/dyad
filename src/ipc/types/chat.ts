@@ -250,6 +250,12 @@ export const chatContracts = {
     input: z.number(), // chatId
     output: z.boolean(),
   }),
+
+  steerMessage: defineContract({
+    channel: "chat:steer",
+    input: z.object({ chatId: z.number(), prompt: z.string() }),
+    output: z.boolean(),
+  }),
 } as const;
 
 // =============================================================================

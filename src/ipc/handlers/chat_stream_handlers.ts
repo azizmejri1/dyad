@@ -126,6 +126,20 @@ const activeStreams = new Map<number, AbortController>();
 // Track partial responses for cancelled streams
 const partialResponses = new Map<number, string>();
 
+// Track steer callbacks for injecting messages mid-stream
+const activeSteerCallbacks = new Map<number, (prompt: string) => void>();
+
+export function registerSteerCallback(
+  chatId: number,
+  callback: (prompt: string) => void,
+) {
+  activeSteerCallbacks.set(chatId, callback);
+}
+
+export function unregisterSteerCallback(chatId: number) {
+  activeSteerCallbacks.delete(chatId);
+}
+
 // Common helper functions
 const TEXT_FILE_EXTENSIONS = [
   ".md",
@@ -1782,6 +1796,18 @@ ${problemReport.problems
 
     return true;
   });
+
+  createTypedHandler(
+    chatContracts.steerMessage,
+    async (_event, { chatId, prompt }) => {
+      const callback = activeSteerCallbacks.get(chatId);
+      if (callback) {
+        callback(prompt);
+        return true;
+      }
+      return false;
+    },
+  );
 }
 
 export function formatMessagesForSummary(
