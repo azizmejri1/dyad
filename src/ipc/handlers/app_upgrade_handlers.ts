@@ -35,7 +35,6 @@ const availableUpgrades: Omit<AppUpgrade, "isNeeded">[] = [
     title: "Enable local HTTPS",
     description:
       "Installs the Vite basic SSL plugin for HTTPS in local development.",
-    manualUpgradeUrl: "https://dyad.sh/docs/upgrades/basic-ssl",
   },
 ];
 
