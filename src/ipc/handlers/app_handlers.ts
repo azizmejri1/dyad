@@ -133,8 +133,19 @@ function buildSnippetFromMatch({
   };
 }
 
-function getDefaultCommand(appId: number): string {
+function isNextApp(appPath: string): boolean {
+  return (
+    fs.existsSync(path.join(appPath, "next.config.js")) ||
+    fs.existsSync(path.join(appPath, "next.config.ts")) ||
+    fs.existsSync(path.join(appPath, "next.config.mjs"))
+  );
+}
+
+function getDefaultCommand(appId: number, appPath: string): string {
   const port = getAppPort(appId);
+  if (isNextApp(appPath)) {
+    return `(pnpm install && pnpm run dev --port ${port} --experimental-https) || (npm install --legacy-peer-deps && npm run dev -- --port ${port} --experimental-https)`;
+  }
   return `(pnpm install && pnpm run dev --port ${port}) || (npm install --legacy-peer-deps && npm run dev -- --port ${port})`;
 }
 async function copyDir(
@@ -218,7 +229,7 @@ async function executeAppLocalNode({
   installCommand?: string | null;
   startCommand?: string | null;
 }): Promise<void> {
-  const command = getCommand({ appId, installCommand, startCommand });
+  const command = getCommand({ appId, appPath, installCommand, startCommand });
   const spawnedProcess = spawn(command, [], {
     cwd: appPath,
     shell: true,
@@ -608,7 +619,7 @@ RUN npm install -g pnpm
       `dyad-app-${appId}`,
       "sh",
       "-c",
-      getCommand({ appId, installCommand, startCommand }),
+      getCommand({ appId, appPath, installCommand, startCommand }),
     ],
     {
       stdio: "pipe",
@@ -2221,17 +2232,19 @@ export function registerAppHandlers() {
 
 function getCommand({
   appId,
+  appPath,
   installCommand,
   startCommand,
 }: {
   appId: number;
+  appPath: string;
   installCommand?: string | null;
   startCommand?: string | null;
 }) {
   const hasCustomCommands = !!installCommand?.trim() && !!startCommand?.trim();
   return hasCustomCommands
     ? `${installCommand!.trim()} && ${startCommand!.trim()}`
-    : getDefaultCommand(appId);
+    : getDefaultCommand(appId, appPath);
 }
 
 async function cleanUpPort(port: number) {

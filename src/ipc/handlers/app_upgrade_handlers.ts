@@ -30,6 +30,12 @@ const availableUpgrades: Omit<AppUpgrade, "isNeeded">[] = [
       "Adds Capacitor to your app lets it run on iOS and Android in addition to the web.",
     manualUpgradeUrl: "https://dyad.sh/docs/guides/mobile-app#upgrade-your-app",
   },
+  {
+    id: "basic-ssl",
+    title: "Enable local HTTPS",
+    description:
+      "Installs the Vite basic SSL plugin for HTTPS in local development.",
+  },
 ];
 
 async function getApp(appId: number) {
@@ -95,6 +101,32 @@ function isCapacitorUpgradeNeeded(appPath: string): boolean {
   }
 
   return true;
+}
+
+function isBasicSslUpgradeNeeded(appPath: string): boolean {
+  if (!isViteApp(appPath)) {
+    return false;
+  }
+
+  const viteConfigPathJs = path.join(appPath, "vite.config.js");
+  const viteConfigPathTs = path.join(appPath, "vite.config.ts");
+
+  let viteConfigPath;
+  if (fs.existsSync(viteConfigPathTs)) {
+    viteConfigPath = viteConfigPathTs;
+  } else if (fs.existsSync(viteConfigPathJs)) {
+    viteConfigPath = viteConfigPathJs;
+  } else {
+    return false;
+  }
+
+  try {
+    const viteConfigContent = fs.readFileSync(viteConfigPath, "utf-8");
+    return !viteConfigContent.includes("@vitejs/plugin-basic-ssl");
+  } catch (e) {
+    logger.error("Error reading vite config", e);
+    return false;
+  }
 }
 
 async function applyComponentTagger(appPath: string) {
@@ -255,6 +287,103 @@ async function applyCapacitor({
   }
 }
 
+async function applyBasicSsl(appPath: string) {
+  const viteConfigPathJs = path.join(appPath, "vite.config.js");
+  const viteConfigPathTs = path.join(appPath, "vite.config.ts");
+
+  let viteConfigPath;
+  if (fs.existsSync(viteConfigPathTs)) {
+    viteConfigPath = viteConfigPathTs;
+  } else if (fs.existsSync(viteConfigPathJs)) {
+    viteConfigPath = viteConfigPathJs;
+  } else {
+    throw new DyadError(
+      "Could not find vite.config.js or vite.config.ts",
+      DyadErrorKind.External,
+    );
+  }
+
+  let content = await fs.promises.readFile(viteConfigPath, "utf-8");
+
+  // Add import statement if not present
+  if (!content.includes("@vitejs/plugin-basic-ssl")) {
+    const lines = content.split("\n");
+    let lastImportIndex = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].startsWith("import ")) {
+        lastImportIndex = i;
+        break;
+      }
+    }
+    lines.splice(
+      lastImportIndex + 1,
+      0,
+      "import basicSsl from '@vitejs/plugin-basic-ssl';",
+    );
+    content = lines.join("\n");
+  }
+
+  // Add plugin to plugins array
+  if (content.includes("plugins: [")) {
+    if (!content.includes("basicSsl()")) {
+      content = content.replace("plugins: [", "plugins: [basicSsl(), ");
+    }
+  } else {
+    throw new Error(
+      "Could not find `plugins: [` in vite.config.ts. Manual installation required.",
+    );
+  }
+
+  await fs.promises.writeFile(viteConfigPath, content);
+
+  // Install the dependency
+  await new Promise<void>((resolve, reject) => {
+    logger.info("Installing basic-ssl dependency");
+    const process = spawn(
+      "pnpm add -D @vitejs/plugin-basic-ssl || npm install --save-dev --legacy-peer-deps @vitejs/plugin-basic-ssl",
+      {
+        cwd: appPath,
+        shell: true,
+        stdio: "pipe",
+      },
+    );
+
+    process.stdout?.on("data", (data) => logger.info(data.toString()));
+    process.stderr?.on("data", (data) => logger.error(data.toString()));
+
+    process.on("close", (code) => {
+      if (code === 0) {
+        logger.info("basic-ssl dependency installed successfully");
+        resolve();
+      } else {
+        logger.error(`Failed to install dependency, exit code ${code}`);
+        reject(new Error("Failed to install dependency"));
+      }
+    });
+
+    process.on("error", (err) => {
+      logger.error("Failed to spawn pnpm", err);
+      reject(err);
+    });
+  });
+
+  // Commit changes
+  try {
+    logger.info("Staging and committing changes");
+    await gitAddAll({ path: appPath });
+    await gitCommit({
+      path: appPath,
+      message: "[dyad] add basic SSL plugin for local HTTPS",
+    });
+    logger.info("Successfully committed changes");
+  } catch (err) {
+    logger.warn(
+      `Failed to commit changes. This may happen if the project is not in a git repository, or if there are no changes to commit.`,
+      err,
+    );
+  }
+}
+
 export function registerAppUpgradeHandlers() {
   handle(
     "get-app-upgrades",
@@ -268,6 +397,8 @@ export function registerAppUpgradeHandlers() {
           isNeeded = isComponentTaggerUpgradeNeeded(appPath);
         } else if (upgrade.id === "capacitor") {
           isNeeded = isCapacitorUpgradeNeeded(appPath);
+        } else if (upgrade.id === "basic-ssl") {
+          isNeeded = isBasicSslUpgradeNeeded(appPath);
         }
         return { ...upgrade, isNeeded };
       });
@@ -290,6 +421,8 @@ export function registerAppUpgradeHandlers() {
         await applyComponentTagger(appPath);
       } else if (upgradeId === "capacitor") {
         await applyCapacitor({ appName: app.name, appPath });
+      } else if (upgradeId === "basic-ssl") {
+        await applyBasicSsl(appPath);
       } else {
         throw new DyadError(
           `Unknown upgrade id: ${upgradeId}`,

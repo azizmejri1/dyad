@@ -337,6 +337,7 @@ const server = http.createServer((clientReq, clientRes) => {
     path: target.pathname + target.search,
     method: clientReq.method,
     headers,
+    ...(isTLS ? { rejectUnauthorized: false } : {}),
   };
 
   const upReq = lib.request(upOpts, (upRes) => {
@@ -412,6 +413,7 @@ server.on("upgrade", (req, socket, _head) => {
     path: target.pathname + target.search,
     method: "GET",
     headers,
+    ...(isTLS ? { rejectUnauthorized: false } : {}),
   });
 
   upReq.on("upgrade", (upRes, upSocket, upHead) => {
