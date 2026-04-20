@@ -20,6 +20,7 @@ import { listFilesTool } from "./tools/list_files";
 import { getSupabaseProjectInfoTool } from "./tools/get_supabase_project_info";
 import { setChatSummaryTool } from "./tools/set_chat_summary";
 import { addIntegrationTool } from "./tools/add_integration";
+import { enableNitroTool } from "./tools/enable_nitro";
 import { readLogsTool } from "./tools/read_logs";
 import { searchReplaceTool } from "./tools/search_replace";
 import { webSearchTool } from "./tools/web_search";
@@ -84,6 +85,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   getDatabaseTableSchemaTool,
   setChatSummaryTool,
   addIntegrationTool,
+  enableNitroTool,
   readLogsTool,
   webSearchTool,
   webCrawlTool,
