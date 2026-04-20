@@ -517,6 +517,7 @@ export async function handleLocalAgentStream(
       neonActiveBranchId:
         chat.app.neonActiveBranchId ?? chat.app.neonDevelopmentBranchId,
       frameworkType: detectFrameworkType(appPath),
+      nitroEnabled: chat.app.nitroEnabled,
       messageId: placeholderMessageId,
       isSharedModulesChanged: false,
       todos: persistedTodos,
