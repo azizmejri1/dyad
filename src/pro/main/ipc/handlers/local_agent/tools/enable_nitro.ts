@@ -51,10 +51,6 @@ server-side compute. Skip for client-side fetch with public/anon keys, for use
 cases fully covered by Supabase (anon key + RLS), or when the user explicitly
 says "static only" / "no backend".
 
-This tool is auto-disabled (via isEnabled) on non-Vite apps, once Nitro is
-already enabled, and on apps connected to Supabase (Edge Functions cover the
-same use case) — if it appears in your toolset, it is safe and appropriate to call.
-
 After this tool returns, follow the "Nitro Server Layer" section appended to
 AI_RULES.md — it covers the required vite.config.ts changes and the conventions
 for routes under server/routes/api/.
