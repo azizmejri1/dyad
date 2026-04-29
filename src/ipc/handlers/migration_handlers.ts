@@ -9,10 +9,18 @@ import { getDyadAppPath } from "../../paths/paths";
 import {
   logger,
   prepareMigrationContext,
-  spawnDrizzleKit,
   areMigrationDepsInstalled,
-  runDrizzleKitPushPreview,
+  introspectProdWithCache,
+  introspectBranch,
+  runBaselineGenerate,
+  runDiffGenerate,
+  readPendingMigrationFiles,
+  parseDrizzleMigrationFile,
   detectDestructiveStatements,
+  deriveWarningsFromDestructive,
+  runDrizzleKitMigrate,
+  invalidateProdIntrospectCache,
+  cleanupWorkDir,
 } from "../utils/migration_utils";
 
 // =============================================================================
@@ -49,74 +57,110 @@ export function registerMigrationHandlers() {
   // -------------------------------------------------------------------------
   // migration:preview
   //
-  // Runs `drizzle-kit push --verbose --strict` and kills the process before
-  // any statement is applied (the hanji prompt blocks without a TTY). Returns
-  // the SQL drizzle-kit would run, plus destructive-change metadata.
+  // 1. Resolve dev/prod branches, ensure deps, wipe+recreate work dir.
+  // 2. Introspect prod (cached, 5 min TTL) → write a baseline snapshot.
+  // 3. Introspect dev (always fresh) → run diff generate.
+  // 4. Read pending migration files; the baseline file is hidden from the UI
+  //    but kept on disk for the apply step's drizzle-kit migrate run.
   // -------------------------------------------------------------------------
   createTypedHandler(migrationContracts.preview, async (_, params) => {
     const { appId } = params;
     logger.info(`Computing migration preview for app ${appId}`);
 
-    const ctx = await prepareMigrationContext({ appId });
-    try {
-      const result = await runDrizzleKitPushPreview({
-        appPath: ctx.appPath,
-        cwd: ctx.tmpDir,
-        prodConnectionUri: ctx.prodUri,
-        pushConfigPath: ctx.pushConfigPath,
-      });
+    const ctx = await prepareMigrationContext({ appId, mode: "preview" });
 
-      const destructiveStatements = detectDestructiveStatements(
-        result.statements,
-      );
+    const prodSchemaPath = await introspectProdWithCache({
+      appId,
+      prodBranchId: ctx.prodBranchId,
+      appPath: ctx.appPath,
+      workDir: ctx.workDir,
+      prodConnectionUri: ctx.prodUri,
+    });
 
-      logger.info(
-        `Migration preview for app ${appId}: ${result.statements.length} statements, ${destructiveStatements.length} destructive, hasDataLoss=${result.hasDataLoss}`,
-      );
+    await runBaselineGenerate({
+      workDir: ctx.workDir,
+      appPath: ctx.appPath,
+      prodSchemaPath,
+      prodConnectionUri: ctx.prodUri,
+    });
 
-      return {
-        statements: result.statements,
-        hasDataLoss: result.hasDataLoss,
-        warnings: result.warnings,
-        destructiveStatements,
-      };
-    } finally {
-      await ctx.cleanup();
+    const devSchemaPath = await introspectBranch({
+      appPath: ctx.appPath,
+      workDir: ctx.workDir,
+      subDir: "dev-schema-out",
+      connectionUri: ctx.devUri,
+    });
+
+    await runDiffGenerate({
+      workDir: ctx.workDir,
+      appPath: ctx.appPath,
+      devSchemaPath,
+      devConnectionUri: ctx.devUri,
+    });
+
+    const pending = await readPendingMigrationFiles(ctx.workDir);
+    const userVisible = pending.filter((p) => !p.isBaseline);
+
+    const statements: string[] = [];
+    for (const entry of userVisible) {
+      statements.push(...parseDrizzleMigrationFile(entry.sql));
     }
+
+    const destructiveStatements = detectDestructiveStatements(statements);
+    const warnings = deriveWarningsFromDestructive(destructiveStatements);
+    const hasDataLoss = destructiveStatements.length > 0;
+
+    logger.info(
+      `Migration preview for app ${appId}: ${statements.length} statements, ${destructiveStatements.length} destructive`,
+    );
+
+    return {
+      statements,
+      hasDataLoss,
+      warnings,
+      destructiveStatements,
+    };
   });
 
   // -------------------------------------------------------------------------
-  // migration:push
+  // migration:migrate
+  //
+  // Consumes the work dir produced by the preceding preview call and runs
+  // `drizzle-kit migrate` against prod. Always invalidates the prod
+  // introspect cache afterwards (success or failure) and cleans the work
+  // dir. The user app's filesystem is not modified.
   // -------------------------------------------------------------------------
-  createTypedHandler(migrationContracts.push, async (_, params) => {
+  createTypedHandler(migrationContracts.migrate, async (_, params) => {
     const { appId } = params;
-    logger.info(`Pushing migration for app ${appId}`);
+    logger.info(`Applying migration for app ${appId}`);
 
-    const ctx = await prepareMigrationContext({ appId });
+    const ctx = await prepareMigrationContext({ appId, mode: "migrate" });
+
+    const pendingBefore = await readPendingMigrationFiles(ctx.workDir);
+    const hasDiff = pendingBefore.some((p) => !p.isBaseline);
+
     try {
-      const pushResult = await spawnDrizzleKit({
-        args: ["push", "--force", `--config=${ctx.pushConfigPath}`],
-        cwd: ctx.tmpDir,
+      const migrateResult = await runDrizzleKitMigrate({
+        workDir: ctx.workDir,
         appPath: ctx.appPath,
-        connectionUri: ctx.prodUri,
+        prodConnectionUri: ctx.prodUri,
       });
 
-      if (pushResult.exitCode !== 0) {
-        throw new DyadError(
-          `Migration push failed: ${pushResult.stderr || pushResult.stdout}`,
-          DyadErrorKind.External,
-        );
-      }
+      const noChanges =
+        !hasDiff || /no\s+migrations\s+to\s+apply/i.test(migrateResult.stdout);
 
-      const noChanges = /no\s+changes\s+detected/i.test(pushResult.stdout);
       logger.info(
         noChanges
           ? `Schemas already in sync for app ${appId}, nothing to migrate.`
-          : `Migration push completed successfully for app ${appId}`,
+          : `Migration applied successfully for app ${appId}`,
       );
       return { success: true, noChanges };
     } finally {
-      await ctx.cleanup();
+      invalidateProdIntrospectCache({
+        appId,
+        prodBranchId: ctx.prodBranchId,
+      });
+      await cleanupWorkDir(ctx.workDir);
     }
   });
 }

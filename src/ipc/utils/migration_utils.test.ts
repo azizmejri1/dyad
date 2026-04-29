@@ -1,87 +1,87 @@
 import { describe, expect, it } from "vitest";
 import {
   detectDestructiveStatements,
-  parseDrizzlePushVerboseOutput,
+  parseDrizzleMigrationFile,
+  deriveWarningsFromDestructive,
 } from "./migration_utils";
 
-// Sample inputs are anchored to drizzle-kit 0.30.x `push --verbose --strict`
-// stdout. Re-validate when MIGRATION_DEPS bumps drizzle-kit.
+// Sample inputs are anchored to the format drizzle-kit `generate` writes:
+// SQL files separated by `--> statement-breakpoint` markers on their own
+// lines. Re-validate when MIGRATION_DEPS bumps drizzle-kit.
 
-const NORMAL_OUTPUT = `\
-✓ Pulling schema from database...
-ALTER TABLE "users" ADD COLUMN "email" text;
-CREATE TABLE "posts" (
-\t"id" serial PRIMARY KEY NOT NULL,
-\t"title" text NOT NULL
-);
+describe("parseDrizzleMigrationFile", () => {
+  it("returns a single statement when there are no breakpoints", () => {
+    const sql = `CREATE TABLE "users" (\n\t"id" serial PRIMARY KEY NOT NULL,\n\t"email" text NOT NULL\n);\n`;
+    const statements = parseDrizzleMigrationFile(sql);
 
-[i] Are you sure you want to push these changes to the database? (y/N)
-`;
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain('CREATE TABLE "users"');
+    expect(statements[0]).toContain('"email" text NOT NULL');
+  });
 
-const DESTRUCTIVE_OUTPUT = `\
-✓ Pulling schema from database...
-· You're about to delete column "legacy_id" in "users" table
-· You're about to delete "old_things" table
-ALTER TABLE "users" DROP COLUMN "legacy_id";
-DROP TABLE "old_things";
-ALTER TABLE "users" ALTER COLUMN "age" SET DATA TYPE bigint;
-[i] ❯ Yes, I want to apply destructive changes
-`;
+  it("splits multiple statements on the breakpoint marker", () => {
+    const sql = [
+      'ALTER TABLE "users" ADD COLUMN "email" text;',
+      "--> statement-breakpoint",
+      'CREATE TABLE "posts" (',
+      '\t"id" serial PRIMARY KEY NOT NULL,',
+      '\t"title" text NOT NULL',
+      ");",
+      "--> statement-breakpoint",
+      'DROP TABLE "old";',
+      "",
+    ].join("\n");
 
-const NO_CHANGES_OUTPUT = `\
-✓ Pulling schema from database...
-[i] No changes detected.
-`;
+    const statements = parseDrizzleMigrationFile(sql);
 
-const ANSI_COLOURED_OUTPUT =
-  // ANSI blue + reset around each line — drizzle-kit's actual coloring style.
-  '\x1b[34mALTER TABLE "users" ADD COLUMN "email" text;\x1b[0m\n' +
-  '\x1b[34mDROP TABLE "old";\x1b[0m\n' +
-  "Are you sure you want to push these changes? (y/N)\n";
-
-describe("parseDrizzlePushVerboseOutput", () => {
-  it("parses single- and multi-line statements", () => {
-    const { statements, warnings } =
-      parseDrizzlePushVerboseOutput(NORMAL_OUTPUT);
-
-    expect(warnings).toEqual([]);
-    expect(statements).toHaveLength(2);
+    expect(statements).toHaveLength(3);
     expect(statements[0]).toBe('ALTER TABLE "users" ADD COLUMN "email" text;');
     expect(statements[1]).toContain('CREATE TABLE "posts"');
     expect(statements[1]).toContain('"title" text NOT NULL');
-    expect(statements[1].endsWith(";")).toBe(true);
+    expect(statements[2]).toBe('DROP TABLE "old";');
   });
 
-  it("captures bullet warnings and destructive statements", () => {
-    const { statements, warnings } =
-      parseDrizzlePushVerboseOutput(DESTRUCTIVE_OUTPUT);
+  it("returns an empty array for a comment-only file (the baseline shape)", () => {
+    const sql =
+      "-- Baseline: prod schema captured at bootstrap. Intentionally no-op; the snapshot\n" +
+      "-- (meta/0000_snapshot.json) is the authoritative anchor for diffing.\n";
 
-    expect(warnings).toEqual([
-      `You're about to delete column "legacy_id" in "users" table`,
-      `You're about to delete "old_things" table`,
-    ]);
-    expect(statements).toHaveLength(3);
-    expect(statements[0]).toMatch(/DROP COLUMN/);
-    expect(statements[1]).toMatch(/^DROP TABLE/);
-    expect(statements[2]).toMatch(/SET DATA TYPE/);
+    expect(parseDrizzleMigrationFile(sql)).toEqual([]);
   });
 
-  it("returns empty when drizzle-kit reports no changes", () => {
-    const { statements, warnings } =
-      parseDrizzlePushVerboseOutput(NO_CHANGES_OUTPUT);
-
-    expect(statements).toEqual([]);
-    expect(warnings).toEqual([]);
+  it("returns an empty array for empty input", () => {
+    expect(parseDrizzleMigrationFile("")).toEqual([]);
+    expect(parseDrizzleMigrationFile("\n\n\n")).toEqual([]);
   });
 
-  it("strips ANSI codes and stops at the prompt marker", () => {
-    const { statements } = parseDrizzlePushVerboseOutput(ANSI_COLOURED_OUTPUT);
+  it("does not split on the marker text inside a SQL string literal", () => {
+    // Marker on its own line splits; same text mid-line (e.g. inside a quoted
+    // value) must NOT split. We anchor the regex to ^...$ with the m flag.
+    const sql = [
+      `INSERT INTO "logs" ("note") VALUES ('--> statement-breakpoint inline');`,
+      "--> statement-breakpoint",
+      'CREATE TABLE "x" ("id" serial);',
+    ].join("\n");
+
+    const statements = parseDrizzleMigrationFile(sql);
 
     expect(statements).toHaveLength(2);
-    expect(statements[0]).toBe('ALTER TABLE "users" ADD COLUMN "email" text;');
+    expect(statements[0]).toContain("INSERT INTO");
+    expect(statements[0]).toContain("inline");
+    expect(statements[1]).toBe('CREATE TABLE "x" ("id" serial);');
+  });
+
+  it("strips ANSI codes that may have leaked into the file", () => {
+    const sql =
+      '\x1b[34mCREATE TABLE "x" ("id" serial);\x1b[0m\n' +
+      "--> statement-breakpoint\n" +
+      '\x1b[31mDROP TABLE "old";\x1b[0m\n';
+
+    const statements = parseDrizzleMigrationFile(sql);
+
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toBe('CREATE TABLE "x" ("id" serial);');
     expect(statements[1]).toBe('DROP TABLE "old";');
-    // Prompt line must not leak into output.
-    expect(statements.join("\n")).not.toMatch(/Are you sure/i);
   });
 });
 
@@ -123,5 +123,25 @@ describe("detectDestructiveStatements", () => {
     expect(result).toHaveLength(1);
     // First match wins; drop_column comes before alter_column_type.
     expect(result[0].reason).toBe("drop_column");
+  });
+});
+
+describe("deriveWarningsFromDestructive", () => {
+  it("produces a unique human-readable warning per destructive reason", () => {
+    const warnings = deriveWarningsFromDestructive([
+      { index: 0, reason: "drop_table" },
+      { index: 1, reason: "drop_column" },
+      { index: 2, reason: "drop_column" }, // duplicate reason
+      { index: 3, reason: "alter_column_type" },
+    ]);
+
+    expect(warnings).toHaveLength(3);
+    expect(warnings.some((w) => /table.*dropped/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /column.*dropped/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /type.*changed/i.test(w))).toBe(true);
+  });
+
+  it("returns empty when there are no destructive statements", () => {
+    expect(deriveWarningsFromDestructive([])).toEqual([]);
   });
 });

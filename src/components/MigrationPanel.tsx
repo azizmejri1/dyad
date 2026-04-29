@@ -64,8 +64,8 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
     onError: invalidateDepsStatus,
   });
 
-  const pushMutation = useMutation({
-    mutationFn: () => ipc.migration.push({ appId }),
+  const migrateMutation = useMutation({
+    mutationFn: () => ipc.migration.migrate({ appId }),
     onSuccess: invalidateDepsStatus,
     onError: invalidateDepsStatus,
   });
@@ -106,20 +106,20 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
 
   // Auto-dismiss success/info banners after 5 seconds
   useEffect(() => {
-    if (pushMutation.isSuccess && pushMutation.data?.success) {
-      const timer = setTimeout(() => pushMutation.reset(), 5000);
+    if (migrateMutation.isSuccess && migrateMutation.data?.success) {
+      const timer = setTimeout(() => migrateMutation.reset(), 5000);
       return () => clearTimeout(timer);
     }
-  }, [pushMutation.isSuccess, pushMutation.data?.success]);
+  }, [migrateMutation.isSuccess, migrateMutation.data?.success]);
 
-  const errorSummary = pushMutation.isError
-    ? getErrorMessage(pushMutation.error)
+  const errorSummary = migrateMutation.isError
+    ? getErrorMessage(migrateMutation.error)
     : t("integrations.migration.errorMessage");
   const errorDetails =
-    pushMutation.error instanceof Error
-      ? (pushMutation.error.stack ?? pushMutation.error.message)
-      : pushMutation.error
-        ? getErrorMessage(pushMutation.error)
+    migrateMutation.error instanceof Error
+      ? (migrateMutation.error.stack ?? migrateMutation.error.message)
+      : migrateMutation.error
+        ? getErrorMessage(migrateMutation.error)
         : null;
 
   return (
@@ -143,7 +143,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
           <span>{t("integrations.migration.backupWarning")}</span>
         </div>
 
-        {depsInstalled === false && !pushMutation.isPending && (
+        {depsInstalled === false && !migrateMutation.isPending && (
           <div
             role="note"
             className="flex items-start gap-2 text-sm text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3"
@@ -155,7 +155,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
 
         <Button
           disabled={
-            pushMutation.isPending ||
+            migrateMutation.isPending ||
             previewMutation.isPending ||
             isProductionBranchActive
           }
@@ -167,7 +167,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
             setPreviewOpen(true);
           }}
         >
-          {pushMutation.isPending ? (
+          {migrateMutation.isPending ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               {installingDepsRef.current
@@ -253,7 +253,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
                 }
                 onClick={() => {
                   setShowErrorDetails(false);
-                  pushMutation.mutate();
+                  migrateMutation.mutate();
                   setConfirmOpen(false);
                 }}
               >
@@ -269,9 +269,9 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
           </p>
         )}
 
-        {pushMutation.isSuccess &&
-          pushMutation.data?.success &&
-          !pushMutation.data?.noChanges && (
+        {migrateMutation.isSuccess &&
+          migrateMutation.data?.success &&
+          !migrateMutation.data?.noChanges && (
             <div
               role="status"
               aria-live="polite"
@@ -282,7 +282,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
             </div>
           )}
 
-        {pushMutation.isSuccess && pushMutation.data?.noChanges && (
+        {migrateMutation.isSuccess && migrateMutation.data?.noChanges && (
           <div
             role="status"
             aria-live="polite"
@@ -293,7 +293,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
           </div>
         )}
 
-        {pushMutation.isError && (
+        {migrateMutation.isError && (
           <div
             role="alert"
             className="text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 space-y-2"

@@ -31,6 +31,25 @@ export const logger = log.scope("migration_handlers");
 
 const MIGRATION_DEPS = ["drizzle-kit", "drizzle-orm"] as const;
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+export const BASELINE_NAME = "baseline";
+
+// Constant comment text. Same bytes every run → same sha256 → drizzle-kit
+// migrate sees the same hash in prod's __drizzle_migrations across runs and
+// skips re-applying. Do NOT include timestamps or app-specific content here.
+export const BASELINE_SQL_BODY =
+  "-- Baseline: prod schema captured at bootstrap. Intentionally no-op; the snapshot\n" +
+  "-- file is the authoritative anchor for diffing.\n";
+
+const PROD_INTROSPECT_TTL_MS = 5 * 60 * 1000;
+
+// =============================================================================
+// Branch resolution
+// =============================================================================
+
 /**
  * Finds the production (default) branch for a Neon project.
  */
@@ -57,6 +76,10 @@ export async function getProductionBranchId(
 
   return { branchId: prodBranch.id };
 }
+
+// =============================================================================
+// drizzle-kit dep management (in user app)
+// =============================================================================
 
 /**
  * Resolves the path to the drizzle-kit bin.cjs inside the user's app.
@@ -124,36 +147,80 @@ export async function installMigrationDeps(appPath: string): Promise<void> {
   }
 }
 
+// =============================================================================
+// Work directory (per-app, stable path so preview→migrate can share state)
+// =============================================================================
+
+export function getMigrationWorkDir(appId: number): string {
+  return path.join(os.tmpdir(), `dyad-migration-app-${appId}`);
+}
+
+export async function ensureFreshWorkDir(workDir: string): Promise<void> {
+  await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(workDir, { recursive: true });
+  if (process.platform !== "win32") {
+    await fs.chmod(workDir, 0o700);
+  }
+}
+
+export async function cleanupWorkDir(workDir: string): Promise<void> {
+  await fs.rm(workDir, { recursive: true, force: true }).catch((err) => {
+    logger.warn(`Failed to clean up work directory ${workDir}: ${err}`);
+  });
+}
+
+// =============================================================================
+// Drizzle config writers
+// =============================================================================
+
 /**
- * Writes a temporary drizzle config file (.js) for introspect or push.
+ * Writes a drizzle.config.js file. The DB URL is referenced via
+ * process.env.DRIZZLE_DATABASE_URL so credentials never touch disk; the
+ * actual value is passed via spawnDrizzleKit's `connectionUri` param.
+ *
+ * Paths are emitted RELATIVE to workDir. drizzle-kit's internal helpers do
+ * `path.join(".", out)` in some code paths, which on macOS produces broken
+ * paths like `.//var/folders/...` when given an absolute `out` — leading to
+ * ENOENT on snapshot reads. We always spawn drizzle-kit with `cwd: workDir`,
+ * so a relative `out` resolves cleanly.
  */
-export async function createTempDrizzleConfig({
-  tmpDir,
+export async function createDrizzleConfig({
+  workDir,
   configName,
+  outDir,
   schemaPath,
 }: {
-  tmpDir: string;
+  workDir: string;
   configName: string;
+  outDir: string;
   schemaPath?: string;
 }): Promise<string> {
-  const outDir = path.join(tmpDir, "schema-out").replace(/\\/g, "/");
-  // Reference an env var instead of writing the connection URI to disk.
-  // The actual value is passed via spawnDrizzleKit's `connectionUri` param.
+  const relOut = toRelative(workDir, outDir);
+  const relSchema = schemaPath ? toRelative(workDir, schemaPath) : undefined;
   const configContent = `module.exports = {
   dialect: "postgresql",
-  out: ${JSON.stringify(outDir)},
+  out: ${JSON.stringify(relOut)},
   dbCredentials: {
     url: process.env.DRIZZLE_DATABASE_URL,
-  },${schemaPath ? `\n  schema: ${JSON.stringify(schemaPath.replace(/\\/g, "/"))},` : ""}
+  },${relSchema ? `\n  schema: ${JSON.stringify(relSchema)},` : ""}
 };
 `;
-  const configPath = path.join(tmpDir, configName);
+  const configPath = path.join(workDir, configName);
   await fs.writeFile(configPath, configContent, {
     encoding: "utf-8",
     mode: 0o600,
   });
   return configPath;
 }
+
+function toRelative(from: string, target: string): string {
+  const rel = path.relative(from, target).replace(/\\/g, "/");
+  return rel.length === 0 ? "." : rel;
+}
+
+// =============================================================================
+// drizzle-kit utility-process spawning
+// =============================================================================
 
 /**
  * Spawns drizzle-kit in an Electron utility process so packaged builds do not
@@ -175,32 +242,7 @@ export async function spawnDrizzleKit({
   timeoutMs?: number;
 }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   if (IS_TEST_BUILD) {
-    const drizzleCommand = args[0];
-
-    if (drizzleCommand === "introspect") {
-      const schemaOutDir = path.join(cwd, "schema-out");
-      await fs.mkdir(schemaOutDir, { recursive: true });
-      await fs.writeFile(path.join(schemaOutDir, "schema.ts"), "export {};\n", {
-        encoding: "utf-8",
-      });
-      return {
-        stdout: "Mock drizzle-kit introspection completed.\n",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    if (drizzleCommand === "push") {
-      return {
-        stdout: "Mock drizzle-kit push completed.\n",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    throw new Error(
-      `Unsupported drizzle-kit command in test build: ${drizzleCommand}`,
-    );
+    return mockDrizzleKitRun({ args, cwd });
   }
 
   const drizzleKitBin = getDrizzleKitPath(appPath);
@@ -302,8 +344,285 @@ export async function spawnDrizzleKit({
   });
 }
 
+interface SpawnDrizzleKitWithEarlyTerminationParams {
+  args: string[];
+  cwd: string;
+  appPath: string;
+  connectionUri: string;
+  /** Hard ceiling — also catches a hung introspect/generate. */
+  maxWaitMs?: number;
+  /**
+   * After drizzle-kit emits its first stdout chunk, settle "idle" if the
+   * stream has been silent for this long. drizzle-kit + the
+   * @neondatabase/serverless driver can leave a websocket open that prevents
+   * the utility process from emitting 'exit' even after the command has
+   * finished its work, so an idle fallback is needed for commands that
+   * don't have observable side-effects beyond stdout/disk. Set to 0 or
+   * undefined to disable.
+   */
+  idleMs?: number;
+  /** If returns true on a chunk, terminate immediately. */
+  shouldTerminateEarly?: (cumulativeStdout: string) => boolean;
+}
+
+interface SpawnDrizzleKitWithEarlyTerminationResult {
+  stdout: string;
+  stderr: string;
+  terminatedReason: "shouldTerminateEarly" | "exit" | "timeout" | "idle";
+}
+
+export async function spawnDrizzleKitWithEarlyTermination({
+  args,
+  cwd,
+  appPath,
+  connectionUri,
+  maxWaitMs = 120_000,
+  idleMs,
+  shouldTerminateEarly,
+}: SpawnDrizzleKitWithEarlyTerminationParams): Promise<SpawnDrizzleKitWithEarlyTerminationResult> {
+  if (IS_TEST_BUILD) {
+    const mock = await mockDrizzleKitRun({ args, cwd });
+    return {
+      stdout: mock.stdout,
+      stderr: mock.stderr,
+      terminatedReason: "exit",
+    };
+  }
+
+  const drizzleKitBin = getDrizzleKitPath(appPath);
+
+  const nodeModulesPath = path.join(appPath, "node_modules");
+  const symlinkTarget = path.join(cwd, "node_modules");
+  try {
+    await fs.symlink(nodeModulesPath, symlinkTarget, "junction");
+  } catch (symlinkErr) {
+    logger.warn(
+      `Failed to create node_modules symlink: ${symlinkErr}. Falling back to NODE_PATH.`,
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    logger.info(
+      `Running drizzle-kit (early-termination): ${drizzleKitBin} ${args.join(" ")}`,
+    );
+
+    let proc: ReturnType<typeof utilityProcess.fork>;
+    try {
+      proc = utilityProcess.fork(drizzleKitBin, args, {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        serviceName: "drizzle-kit-early",
+        env: Object.fromEntries(
+          Object.entries({
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            USERPROFILE: process.env.USERPROFILE,
+            TEMP: process.env.TEMP,
+            TMP: process.env.TMP,
+            TMPDIR: process.env.TMPDIR,
+            NODE_PATH: nodeModulesPath,
+            DRIZZLE_DATABASE_URL: connectionUri,
+          }).filter(([, v]) => v !== undefined),
+        ),
+      });
+    } catch (error) {
+      reject(
+        new DyadError(
+          `Failed to spawn drizzle-kit: ${error instanceof Error ? error.message : String(error)}`,
+          DyadErrorKind.Internal,
+        ),
+      );
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let idleTimer: NodeJS.Timeout | null = null;
+
+    const settle = (
+      reason: SpawnDrizzleKitWithEarlyTerminationResult["terminatedReason"],
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(maxTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      if (reason !== "exit") {
+        try {
+          proc.kill();
+        } catch {
+          // best-effort
+        }
+      }
+      resolve({ stdout, stderr, terminatedReason: reason });
+    };
+
+    const maxTimer = setTimeout(() => settle("timeout"), maxWaitMs);
+
+    const armOrResetIdle = () => {
+      if (!idleMs || idleMs <= 0) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => settle("idle"), idleMs);
+    };
+
+    proc.stdout?.on("data", (data) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      logger.info(`drizzle-kit (early) stdout: ${chunk}`);
+
+      armOrResetIdle();
+
+      if (shouldTerminateEarly && shouldTerminateEarly(stdout)) {
+        settle("shouldTerminateEarly");
+      }
+    });
+
+    proc.stderr?.on("data", (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      logger.warn(`drizzle-kit (early) stderr: ${chunk}`);
+    });
+
+    proc.on("exit", () => {
+      settle("exit");
+    });
+
+    proc.on("error", (type, location, report) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(maxTimer);
+      reject(
+        new DyadError(
+          `drizzle-kit utility process failed (${type}) at ${location}. ${report}`,
+          DyadErrorKind.Internal,
+        ),
+      );
+    });
+  });
+}
+
 // =============================================================================
-// Migration preview (drizzle-kit push --verbose --strict, killed before apply)
+// IS_TEST_BUILD shims
+// =============================================================================
+
+async function mockDrizzleKitRun({
+  args,
+  cwd,
+}: {
+  args: string[];
+  cwd: string;
+}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const drizzleCommand = args[0];
+
+  if (drizzleCommand === "introspect") {
+    // Find the --config arg and parse the out dir from the file. Fall back to
+    // a conventional path under cwd when we cannot read the config.
+    const outDir = await resolveOutDirFromConfig({ args, cwd });
+    await fs.mkdir(outDir, { recursive: true });
+    await fs.writeFile(path.join(outDir, "schema.ts"), "export {};\n", {
+      encoding: "utf-8",
+    });
+    return {
+      stdout: "Mock drizzle-kit introspection completed.\n",
+      stderr: "",
+      exitCode: 0,
+    };
+  }
+
+  if (drizzleCommand === "generate") {
+    const outDir = await resolveOutDirFromConfig({ args, cwd });
+    const metaDir = path.join(outDir, "meta");
+    await fs.mkdir(metaDir, { recursive: true });
+    const isBaseline = args.some(
+      (a) => a === `--name=${BASELINE_NAME}` || a === BASELINE_NAME,
+    );
+
+    let journal: { entries: { idx: number; tag: string }[] };
+    try {
+      journal = JSON.parse(
+        await fs.readFile(path.join(metaDir, "_journal.json"), "utf-8"),
+      );
+    } catch {
+      journal = { entries: [] };
+    }
+    if (!journal.entries) {
+      journal.entries = [];
+    }
+
+    const idx = journal.entries.length;
+    const tag = isBaseline
+      ? `${String(idx).padStart(4, "0")}_${BASELINE_NAME}`
+      : `${String(idx).padStart(4, "0")}_test_diff`;
+
+    // Mirror real drizzle-kit: write a "real" CREATE TABLE for the baseline
+    // file. runBaselineGenerate then overwrites it with BASELINE_SQL_BODY.
+    // For the diff, write a multi-statement migration so the parser tests
+    // exercise the breakpoint splitter.
+    await fs.writeFile(
+      path.join(outDir, `${tag}.sql`),
+      isBaseline
+        ? 'CREATE TABLE "mock_baseline" ("id" serial);\n'
+        : 'CREATE TABLE "mock" ("id" serial);\n--> statement-breakpoint\nALTER TABLE "mock" ADD COLUMN "name" text;\n',
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(metaDir, `${String(idx).padStart(4, "0")}_snapshot.json`),
+      JSON.stringify({}, null, 2),
+      "utf-8",
+    );
+    journal.entries.push({ idx, tag });
+    await fs.writeFile(
+      path.join(metaDir, "_journal.json"),
+      JSON.stringify(journal, null, 2),
+      "utf-8",
+    );
+
+    return {
+      stdout: "Mock drizzle-kit generate completed.\n",
+      stderr: "",
+      exitCode: 0,
+    };
+  }
+
+  if (drizzleCommand === "migrate") {
+    return {
+      stdout: "Mock drizzle-kit migrate completed.\n",
+      stderr: "",
+      exitCode: 0,
+    };
+  }
+
+  throw new Error(
+    `Unsupported drizzle-kit command in test build: ${drizzleCommand}`,
+  );
+}
+
+async function resolveOutDirFromConfig({
+  args,
+  cwd,
+}: {
+  args: string[];
+  cwd: string;
+}): Promise<string> {
+  const configArg = args.find((a) => a.startsWith("--config="));
+  if (!configArg) {
+    return path.join(cwd, "schema-out");
+  }
+  const configPath = configArg.slice("--config=".length);
+  try {
+    const content = await fs.readFile(configPath, "utf-8");
+    const match = content.match(/out:\s*"([^"]+)"/);
+    if (match) {
+      return match[1];
+    }
+  } catch {
+    // fall through
+  }
+  return path.join(cwd, "schema-out");
+}
+
+// =============================================================================
+// Destructive change detection
 // =============================================================================
 
 const ANSI_RE =
@@ -314,16 +633,22 @@ function stripAnsi(input: string): string {
   return input.replace(ANSI_RE, "");
 }
 
-// `m` flag is required because the cumulative-stdout check in
-// spawnDrizzleKitWithEarlyTermination tests this against a multi-line buffer
-// (`Pulling schema...\n` precedes the first SQL line). Without it, `^` only
-// matches the start of the buffer and the idle-timer fallback never arms.
-const SQL_START_RE =
-  /^\s*(CREATE|ALTER|DROP|TRUNCATE|COMMENT|INSERT|UPDATE|DELETE)\b/im;
+// Matches drizzle-kit's interactive prompts (rename detection during generate,
+// any hanji selector).
+const PROMPT_MARKER_RE =
+  /Are you sure|\(y\/N\)|❯|Yes,\s*I want|Is column\s+|created or renamed/i;
 
-const PROMPT_MARKER_RE = /Are you sure|\(y\/N\)|❯|Yes,\s*I want/i;
+// Idle window after first stdout chunk before we conclude drizzle-kit has
+// finished its work. drizzle-kit's pg dialect imports the
+// @neondatabase/serverless driver, which leaves a websocket open and
+// prevents the Node utility process from emitting 'exit' even when the
+// command's work is complete. Idle detection is content-agnostic: it
+// doesn't matter what drizzle-kit prints, only that it stops printing.
+const GENERATE_IDLE_MS = 3000;
 
-const WARNING_PREFIX_RE = /^\s*[·•]\s+/;
+function shouldTerminateOnPromptOnly(cumulativeStdout: string): boolean {
+  return PROMPT_MARKER_RE.test(stripAnsi(cumulativeStdout));
+}
 
 const DESTRUCTIVE_PATTERNS: Array<{
   regex: RegExp;
@@ -358,300 +683,444 @@ export function detectDestructiveStatements(
   return out;
 }
 
-// Parses drizzle-kit's `push --verbose` stdout. Format anchored to drizzle-kit
-// 0.30.x — must be re-validated if MIGRATION_DEPS bumps to a new major.
-export function parseDrizzlePushVerboseOutput(rawStdout: string): {
-  statements: string[];
-  warnings: string[];
-} {
-  const cleaned = stripAnsi(rawStdout);
-  const lines = cleaned.split(/\r?\n/);
+const DESTRUCTIVE_REASON_HUMAN: Record<DestructiveStatementReason, string> = {
+  drop_table: "A table will be dropped.",
+  drop_column: "A column will be dropped.",
+  alter_column_type: "A column's type will be changed (data conversion).",
+  truncate: "A table will be truncated.",
+  drop_schema: "A schema will be dropped.",
+};
 
-  const statements: string[] = [];
-  const warnings: string[] = [];
-  let buf = "";
-  let inSql = false;
-
-  const flush = () => {
-    const trimmed = buf.trim().replace(/;\s*$/, "").trim();
-    if (trimmed.length > 0) {
-      statements.push(trimmed + ";");
-    }
-    buf = "";
-    inSql = false;
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+$/, "");
-
-    if (PROMPT_MARKER_RE.test(line)) {
-      flush();
-      // Everything after the prompt marker is hanji UI noise.
-      buf = "";
-      inSql = false;
-      break;
-    }
-
-    // drizzle-kit emits data-loss warnings as bullet lines like
-    //   "· You're about to delete column X in Y table"
-    // before any SQL appears.
-    if (!inSql && WARNING_PREFIX_RE.test(line)) {
-      warnings.push(line.replace(WARNING_PREFIX_RE, "").trim());
-      continue;
-    }
-
-    if (SQL_START_RE.test(line)) {
-      flush();
-      buf = line + "\n";
-      inSql = true;
-      if (/;\s*$/.test(line)) {
-        flush();
-      }
-      continue;
-    }
-
-    if (inSql) {
-      buf += line + "\n";
-      if (/;\s*$/.test(line)) {
-        flush();
-      }
-    }
+export function deriveWarningsFromDestructive(
+  destructive: DestructiveStatement[],
+): string[] {
+  // De-dupe by reason so users don't see the same line N times.
+  const seen = new Set<DestructiveStatementReason>();
+  const out: string[] = [];
+  for (const d of destructive) {
+    if (seen.has(d.reason)) continue;
+    seen.add(d.reason);
+    out.push(DESTRUCTIVE_REASON_HUMAN[d.reason]);
   }
-
-  flush();
-  return { statements, warnings };
+  return out;
 }
 
-interface SpawnDrizzleKitWithEarlyTerminationParams {
-  args: string[];
-  cwd: string;
-  appPath: string;
-  connectionUri: string;
-  /** Resolve when stdout idles for this long after first SQL line. */
-  idleMs?: number;
-  /** Hard ceiling — also catches a hung introspect. */
-  maxWaitMs?: number;
-  /** If returns true on a chunk, terminate immediately. */
-  shouldTerminateEarly?: (cumulativeStdout: string) => boolean;
-}
+// =============================================================================
+// Migration file parsing
+// =============================================================================
 
-interface SpawnDrizzleKitWithEarlyTerminationResult {
-  stdout: string;
-  stderr: string;
-  terminatedReason: "idle" | "shouldTerminateEarly" | "exit" | "timeout";
-}
+const STATEMENT_BREAKPOINT_RE = /^\s*-->\s*statement-breakpoint\s*$/m;
 
-export async function spawnDrizzleKitWithEarlyTermination({
-  args,
-  cwd,
-  appPath,
-  connectionUri,
-  idleMs = 2500,
-  maxWaitMs = 90_000,
-  shouldTerminateEarly,
-}: SpawnDrizzleKitWithEarlyTerminationParams): Promise<SpawnDrizzleKitWithEarlyTerminationResult> {
-  if (IS_TEST_BUILD) {
-    return {
-      stdout: 'CREATE TABLE "mock" ();\n',
-      stderr: "",
-      terminatedReason: "exit",
-    };
+/**
+ * Splits a drizzle-kit migration file's SQL on the `--> statement-breakpoint`
+ * separator (anchored to its own line, so the marker text inside a SQL string
+ * literal does not split mid-statement). Strips comment-only chunks.
+ */
+export function parseDrizzleMigrationFile(sql: string): string[] {
+  const cleaned = stripAnsi(sql);
+  const pieces = cleaned.split(STATEMENT_BREAKPOINT_RE);
+  const out: string[] = [];
+  for (const raw of pieces) {
+    const trimmed = stripCommentsAndTrim(raw);
+    if (trimmed.length === 0) continue;
+    out.push(trimmed);
   }
+  return out;
+}
 
-  const drizzleKitBin = getDrizzleKitPath(appPath);
+function stripCommentsAndTrim(piece: string): string {
+  // Remove leading line-comments and blank lines. We do NOT strip comments
+  // inside the body — only the leading whitespace/comments before the first
+  // SQL token.
+  const lines = piece.split(/\r?\n/);
+  const meaningful: string[] = [];
+  let started = false;
+  for (const line of lines) {
+    if (!started) {
+      if (line.trim().length === 0) continue;
+      if (/^\s*--/.test(line)) continue;
+      started = true;
+    }
+    meaningful.push(line);
+  }
+  // Trim trailing whitespace and a single trailing semicolon's whitespace.
+  return meaningful.join("\n").replace(/\s+$/, "");
+}
 
-  const nodeModulesPath = path.join(appPath, "node_modules");
-  const symlinkTarget = path.join(cwd, "node_modules");
+interface PendingMigration {
+  name: string;
+  sql: string;
+  isBaseline: boolean;
+}
+
+/**
+ * Reads `<workDir>/drizzle/meta/_journal.json` and returns each entry's SQL.
+ *
+ * The baseline file is identified by **content equality** to
+ * `BASELINE_SQL_BODY`. `runBaselineGenerate` always overwrites the file
+ * drizzle-kit produced for the baseline run with this exact constant, so
+ * content comparison is unambiguous regardless of whatever filename
+ * drizzle-kit chose (it ignores `--name=baseline` on some versions).
+ */
+export async function readPendingMigrationFiles(
+  workDir: string,
+): Promise<PendingMigration[]> {
+  const drizzleDir = path.join(workDir, "drizzle");
+  const journalPath = path.join(drizzleDir, "meta", "_journal.json");
+
+  let journal: { entries?: Array<{ idx: number; tag: string }> };
   try {
-    await fs.symlink(nodeModulesPath, symlinkTarget, "junction");
-  } catch (symlinkErr) {
-    logger.warn(
-      `Failed to create node_modules symlink: ${symlinkErr}. Falling back to NODE_PATH.`,
-    );
+    journal = JSON.parse(await fs.readFile(journalPath, "utf-8"));
+  } catch {
+    return [];
   }
 
-  return new Promise((resolve, reject) => {
-    logger.info(
-      `Running drizzle-kit (preview): ${drizzleKitBin} ${args.join(" ")}`,
-    );
-
-    let proc: ReturnType<typeof utilityProcess.fork>;
+  const entries = journal.entries ?? [];
+  const out: PendingMigration[] = [];
+  for (const entry of entries) {
+    const filePath = path.join(drizzleDir, `${entry.tag}.sql`);
+    let sql: string;
     try {
-      proc = utilityProcess.fork(drizzleKitBin, args, {
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        serviceName: "drizzle-kit-preview",
-        env: Object.fromEntries(
-          Object.entries({
-            PATH: process.env.PATH,
-            HOME: process.env.HOME,
-            USERPROFILE: process.env.USERPROFILE,
-            TEMP: process.env.TEMP,
-            TMP: process.env.TMP,
-            TMPDIR: process.env.TMPDIR,
-            NODE_PATH: nodeModulesPath,
-            DRIZZLE_DATABASE_URL: connectionUri,
-          }).filter(([, v]) => v !== undefined),
-        ),
-      });
-    } catch (error) {
-      reject(
-        new DyadError(
-          `Failed to spawn drizzle-kit: ${error instanceof Error ? error.message : String(error)}`,
-          DyadErrorKind.Internal,
-        ),
-      );
-      return;
+      sql = await fs.readFile(filePath, "utf-8");
+    } catch {
+      continue;
     }
-
-    let stdout = "";
-    let stderr = "";
-    let armed = false;
-    let settled = false;
-    let idleTimer: NodeJS.Timeout | null = null;
-
-    const settle = (
-      reason: SpawnDrizzleKitWithEarlyTerminationResult["terminatedReason"],
-    ) => {
-      if (settled) return;
-      settled = true;
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(maxTimer);
-      if (reason !== "exit") {
-        try {
-          proc.kill();
-        } catch {
-          // best-effort
-        }
-      }
-      resolve({ stdout, stderr, terminatedReason: reason });
-    };
-
-    const armOrResetIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => settle("idle"), idleMs);
-    };
-
-    const maxTimer = setTimeout(() => settle("timeout"), maxWaitMs);
-
-    proc.stdout?.on("data", (data) => {
-      const chunk = data.toString();
-      stdout += chunk;
-      logger.info(`drizzle-kit (preview) stdout: ${chunk}`);
-
-      const cleaned = stripAnsi(stdout);
-
-      if (!armed && SQL_START_RE.test(cleaned)) {
-        armed = true;
-      }
-      if (armed) {
-        armOrResetIdle();
-      }
-
-      if (shouldTerminateEarly && shouldTerminateEarly(stdout)) {
-        settle("shouldTerminateEarly");
-      }
+    out.push({
+      name: entry.tag,
+      sql,
+      isBaseline: sql === BASELINE_SQL_BODY,
     });
-
-    proc.stderr?.on("data", (data) => {
-      const chunk = data.toString();
-      stderr += chunk;
-      logger.warn(`drizzle-kit (preview) stderr: ${chunk}`);
-    });
-
-    proc.on("exit", () => {
-      settle("exit");
-    });
-
-    proc.on("error", (type, location, report) => {
-      if (settled) return;
-      settled = true;
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(maxTimer);
-      reject(
-        new DyadError(
-          `drizzle-kit utility process failed (${type}) at ${location}. ${report}`,
-          DyadErrorKind.Internal,
-        ),
-      );
-    });
-  });
+  }
+  return out;
 }
 
-export async function runDrizzleKitPushPreview({
-  appPath,
-  cwd,
-  prodConnectionUri,
-  pushConfigPath,
-}: {
-  appPath: string;
-  cwd: string;
-  prodConnectionUri: string;
-  pushConfigPath: string;
-}): Promise<{
-  statements: string[];
-  warnings: string[];
-  hasDataLoss: boolean;
-}> {
-  if (IS_TEST_BUILD) {
-    return {
-      statements: ['CREATE TABLE "mock" ();'],
-      warnings: [],
-      hasDataLoss: false,
-    };
-  }
+// =============================================================================
+// Prod introspect cache
+// =============================================================================
 
-  const result = await spawnDrizzleKitWithEarlyTermination({
-    args: ["push", "--verbose", "--strict", `--config=${pushConfigPath}`],
-    cwd,
-    appPath,
-    connectionUri: prodConnectionUri,
-    idleMs: 2500,
-    maxWaitMs: 90_000,
-    shouldTerminateEarly: (cum) => PROMPT_MARKER_RE.test(stripAnsi(cum)),
+interface IntrospectCacheEntry {
+  schemaTs: string;
+  expiresAt: number;
+}
+
+const prodIntrospectCache = new Map<string, IntrospectCacheEntry>();
+
+function makeCacheKey(appId: number, prodBranchId: string): string {
+  return `${appId}:${prodBranchId}`;
+}
+
+export function invalidateProdIntrospectCache({
+  appId,
+  prodBranchId,
+}: {
+  appId: number;
+  prodBranchId: string;
+}): void {
+  prodIntrospectCache.delete(makeCacheKey(appId, prodBranchId));
+}
+
+// =============================================================================
+// Introspect helpers
+// =============================================================================
+
+interface IntrospectBranchParams {
+  appPath: string;
+  workDir: string;
+  /** Subdirectory under workDir that drizzle-kit will write the schema.ts to. */
+  subDir: string;
+  connectionUri: string;
+}
+
+/**
+ * Runs `drizzle-kit introspect` for a single branch, writing schema.ts (and
+ * other introspect outputs) under `<workDir>/<subDir>`. Returns the absolute
+ * path to schema.ts.
+ */
+export async function introspectBranch({
+  appPath,
+  workDir,
+  subDir,
+  connectionUri,
+}: IntrospectBranchParams): Promise<string> {
+  const outDir = path.join(workDir, subDir);
+  await fs.mkdir(outDir, { recursive: true });
+
+  const configPath = await createDrizzleConfig({
+    workDir,
+    configName: `${subDir}.introspect.config.js`,
+    outDir,
   });
 
-  const { statements, warnings } = parseDrizzlePushVerboseOutput(result.stdout);
+  const result = await spawnDrizzleKit({
+    args: ["introspect", `--config=${configPath}`],
+    cwd: workDir,
+    appPath,
+    connectionUri,
+  });
 
-  // Empty parse + clean exit usually means "no changes detected".
-  if (statements.length === 0 && result.terminatedReason === "exit") {
-    return { statements: [], warnings, hasDataLoss: warnings.length > 0 };
+  if (result.exitCode !== 0) {
+    throw new DyadError(
+      `Schema introspection failed: ${result.stderr || result.stdout}`,
+      DyadErrorKind.External,
+    );
   }
 
-  // Empty parse but drizzle-kit clearly did real work — assume parser drift.
-  if (
-    statements.length === 0 &&
-    result.stdout.length > 1024 &&
-    /Pulling schema/i.test(stripAnsi(result.stdout))
-  ) {
+  let schemaFiles: string[];
+  try {
+    schemaFiles = await fs.readdir(outDir);
+  } catch {
     throw new DyadError(
-      "Could not parse drizzle-kit migration plan output. The drizzle-kit version may have changed format.",
+      "drizzle-kit introspect did not generate output. The database may have an unsupported schema.",
       DyadErrorKind.Internal,
     );
   }
 
-  if (result.terminatedReason === "timeout") {
-    if (statements.length === 0) {
-      throw new DyadError(
-        "Migration preview timed out before computing the plan. The database endpoint may be suspended — please try again.",
-        DyadErrorKind.External,
-      );
-    }
-    logger.warn(
-      `drizzle-kit preview hit max-wait timeout — returning whatever was parsed.`,
+  const tsSchemaFile =
+    schemaFiles.find((f) => f === "schema.ts") ??
+    schemaFiles.find((f) => f.endsWith(".ts") && f !== "relations.ts");
+  if (!tsSchemaFile) {
+    throw new DyadError(
+      "drizzle-kit introspect did not generate any schema files.",
+      DyadErrorKind.Internal,
     );
   }
 
-  const destructive = detectDestructiveStatements(statements);
-  return {
-    statements,
-    warnings,
-    hasDataLoss: destructive.length > 0 || warnings.length > 0,
-  };
+  return path.join(outDir, tsSchemaFile);
+}
+
+/**
+ * Introspects prod with a 5-minute in-memory cache keyed by appId+prodBranchId.
+ * On a cache hit, writes the cached schema.ts to disk under the work dir
+ * without re-running drizzle-kit. The cache is invalidated by every apply
+ * attempt (success or failure) — see `invalidateProdIntrospectCache`.
+ */
+export async function introspectProdWithCache({
+  appId,
+  prodBranchId,
+  appPath,
+  workDir,
+  prodConnectionUri,
+}: {
+  appId: number;
+  prodBranchId: string;
+  appPath: string;
+  workDir: string;
+  prodConnectionUri: string;
+}): Promise<string> {
+  const subDir = "prod-schema-out";
+  const outDir = path.join(workDir, subDir);
+  const schemaPath = path.join(outDir, "schema.ts");
+  const key = makeCacheKey(appId, prodBranchId);
+
+  const cached = prodIntrospectCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    logger.info(`Prod introspect cache HIT for ${key}`);
+    await fs.mkdir(outDir, { recursive: true });
+    await fs.writeFile(schemaPath, cached.schemaTs, "utf-8");
+    return schemaPath;
+  }
+
+  logger.info(`Prod introspect cache MISS for ${key}; running introspect.`);
+  let resolvedSchemaPath: string;
+  try {
+    resolvedSchemaPath = await introspectBranch({
+      appPath,
+      workDir,
+      subDir,
+      connectionUri: prodConnectionUri,
+    });
+  } catch (err) {
+    prodIntrospectCache.delete(key);
+    throw err;
+  }
+
+  try {
+    const schemaTs = await fs.readFile(resolvedSchemaPath, "utf-8");
+    prodIntrospectCache.set(key, {
+      schemaTs,
+      expiresAt: Date.now() + PROD_INTROSPECT_TTL_MS,
+    });
+  } catch (err) {
+    logger.warn(`Failed to read introspected prod schema for caching: ${err}`);
+  }
+
+  return resolvedSchemaPath;
 }
 
 // =============================================================================
-// Shared migration setup (used by both `migration:preview` and `migration:push`)
+// drizzle-kit generate (baseline + diff)
+// =============================================================================
+
+/**
+ * Runs `drizzle-kit generate --name=baseline` against an introspected prod
+ * schema, then overwrites the produced baseline SQL file with a constant
+ * comment so applying it is a no-op. The snapshot is left untouched — that
+ * is the authoritative anchor for the next diff.
+ *
+ * drizzle-kit doesn't always honor --name=baseline (it falls back to a
+ * random adjective+noun on some versions), so we look up the file path via
+ * the journal's first entry rather than hardcoding it. Returns whether
+ * drizzle-kit produced a journal entry at all (false for an empty prod
+ * schema → "no schema changes").
+ */
+export async function runBaselineGenerate({
+  workDir,
+  appPath,
+  prodSchemaPath,
+  prodConnectionUri,
+}: {
+  workDir: string;
+  appPath: string;
+  prodSchemaPath: string;
+  prodConnectionUri: string;
+}): Promise<{ baselineProduced: boolean }> {
+  const drizzleDir = path.join(workDir, "drizzle");
+  await fs.mkdir(drizzleDir, { recursive: true });
+
+  const configPath = await createDrizzleConfig({
+    workDir,
+    configName: "bootstrap.config.js",
+    outDir: drizzleDir,
+    schemaPath: prodSchemaPath,
+  });
+
+  const result = await spawnDrizzleKitWithEarlyTermination({
+    args: ["generate", `--config=${configPath}`, `--name=${BASELINE_NAME}`],
+    cwd: workDir,
+    appPath,
+    connectionUri: prodConnectionUri,
+    idleMs: GENERATE_IDLE_MS,
+    shouldTerminateEarly: shouldTerminateOnPromptOnly,
+  });
+
+  if (result.terminatedReason === "shouldTerminateEarly") {
+    throw new DyadError(
+      "drizzle-kit prompted during baseline generation. The prod schema may have ambiguous renames; please resolve them manually.",
+      DyadErrorKind.External,
+    );
+  }
+  if (result.terminatedReason === "timeout") {
+    throw new DyadError(
+      "Baseline generation timed out. drizzle-kit produced no output for 2 minutes.",
+      DyadErrorKind.External,
+    );
+  }
+
+  // Find the baseline file via the journal's first entry. drizzle-kit names
+  // the file randomly on some versions even with --name=baseline, so we
+  // can't hardcode a path.
+  const journalPath = path.join(drizzleDir, "meta", "_journal.json");
+  let firstEntry: { idx: number; tag: string } | undefined;
+  try {
+    const journal = JSON.parse(await fs.readFile(journalPath, "utf-8")) as {
+      entries?: Array<{ idx: number; tag: string }>;
+    };
+    firstEntry = journal.entries?.[0];
+  } catch {
+    // No journal — drizzle-kit said "no schema changes" (empty prod). No
+    // baseline file to neutralize; the next diff-generate will start fresh.
+    return { baselineProduced: false };
+  }
+
+  if (!firstEntry) {
+    return { baselineProduced: false };
+  }
+
+  // Overwrite the baseline SQL with the constant no-op comment so the hash
+  // is stable across runs (prod's __drizzle_migrations sees the same hash
+  // for the baseline every time and skips it).
+  const baselineSqlPath = path.join(drizzleDir, `${firstEntry.tag}.sql`);
+  await fs.writeFile(baselineSqlPath, BASELINE_SQL_BODY, "utf-8");
+
+  return { baselineProduced: true };
+}
+
+/**
+ * Runs `drizzle-kit generate` against the dev-introspected schema. If dev
+ * differs from prod (the previously-written baseline snapshot), drizzle-kit
+ * writes a 000N_<random>.sql file. If schemas match, no new file is written.
+ */
+export async function runDiffGenerate({
+  workDir,
+  appPath,
+  devSchemaPath,
+  devConnectionUri,
+}: {
+  workDir: string;
+  appPath: string;
+  devSchemaPath: string;
+  devConnectionUri: string;
+}): Promise<void> {
+  const drizzleDir = path.join(workDir, "drizzle");
+  const configPath = await createDrizzleConfig({
+    workDir,
+    configName: "generate.config.js",
+    outDir: drizzleDir,
+    schemaPath: devSchemaPath,
+  });
+
+  const result = await spawnDrizzleKitWithEarlyTermination({
+    args: ["generate", `--config=${configPath}`],
+    cwd: workDir,
+    appPath,
+    connectionUri: devConnectionUri,
+    idleMs: GENERATE_IDLE_MS,
+    shouldTerminateEarly: shouldTerminateOnPromptOnly,
+  });
+
+  if (result.terminatedReason === "shouldTerminateEarly") {
+    throw new DyadError(
+      "drizzle-kit prompted for a column rename. Drop and re-add the column instead, or run drizzle-kit generate manually.",
+      DyadErrorKind.External,
+    );
+  }
+  if (result.terminatedReason === "timeout") {
+    throw new DyadError(
+      "Migration plan generation timed out.",
+      DyadErrorKind.External,
+    );
+  }
+}
+
+// =============================================================================
+// drizzle-kit migrate
+// =============================================================================
+
+export async function runDrizzleKitMigrate({
+  workDir,
+  appPath,
+  prodConnectionUri,
+}: {
+  workDir: string;
+  appPath: string;
+  prodConnectionUri: string;
+}): Promise<{ stdout: string; stderr: string }> {
+  const drizzleDir = path.join(workDir, "drizzle");
+  const configPath = await createDrizzleConfig({
+    workDir,
+    configName: "migrate.config.js",
+    outDir: drizzleDir,
+  });
+
+  const result = await spawnDrizzleKit({
+    args: ["migrate", `--config=${configPath}`],
+    cwd: workDir,
+    appPath,
+    connectionUri: prodConnectionUri,
+  });
+
+  if (result.exitCode !== 0) {
+    throw new DyadError(
+      `Migration apply failed: ${result.stderr || result.stdout}`,
+      DyadErrorKind.External,
+    );
+  }
+
+  return { stdout: result.stdout, stderr: result.stderr };
+}
+
+// =============================================================================
+// Migration context (shared setup for preview + migrate)
 // =============================================================================
 
 export interface MigrationContext {
@@ -661,15 +1130,17 @@ export interface MigrationContext {
   devUri: string;
   prodUri: string;
   appPath: string;
-  tmpDir: string;
-  pushConfigPath: string;
-  cleanup: () => Promise<void>;
+  workDir: string;
 }
+
+export type MigrationMode = "preview" | "migrate";
 
 export async function prepareMigrationContext({
   appId,
+  mode,
 }: {
   appId: number;
+  mode: MigrationMode;
 }): Promise<MigrationContext> {
   // 1. Resolve branches
   const { appData, branchId: devBranchId } = await getAppWithNeonBranch(appId);
@@ -761,83 +1232,31 @@ export async function prepareMigrationContext({
     }
   }
 
-  // 5. Temp directory with restricted permissions
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyad-migration-"));
-  if (process.platform !== "win32") {
-    await fs.chmod(tmpDir, 0o700);
-  }
-
-  const cleanup = async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch((err) => {
-      logger.warn(`Failed to clean up temp directory ${tmpDir}: ${err}`);
-    });
-  };
-
-  try {
-    // 6. Introspect dev schema
-    const introspectConfigPath = await createTempDrizzleConfig({
-      tmpDir,
-      configName: "drizzle-introspect.config.js",
-    });
-
-    const introspectResult = await spawnDrizzleKit({
-      args: ["introspect", `--config=${introspectConfigPath}`],
-      cwd: tmpDir,
-      appPath,
-      connectionUri: devUri,
-    });
-
-    if (introspectResult.exitCode !== 0) {
-      throw new DyadError(
-        `Schema introspection failed: ${introspectResult.stderr || introspectResult.stdout}`,
-        DyadErrorKind.External,
-      );
-    }
-
-    // 7. Find the generated schema file
-    const schemaOutDir = path.join(tmpDir, "schema-out");
-    let schemaFiles: string[];
+  // 5. Work directory
+  const workDir = getMigrationWorkDir(appId);
+  if (mode === "preview") {
+    await ensureFreshWorkDir(workDir);
+  } else {
+    // mode === "migrate" — work dir must already contain a journal from a
+    // prior preview. Defend against direct IPC use without a preview first.
+    const journalPath = path.join(workDir, "drizzle", "meta", "_journal.json");
     try {
-      schemaFiles = await fs.readdir(schemaOutDir);
+      await fs.access(journalPath);
     } catch {
       throw new DyadError(
-        "drizzle-kit introspect did not generate output. Your development database may have an unsupported schema.",
-        DyadErrorKind.Internal,
+        "Migration plan expired. Click preview again before applying.",
+        DyadErrorKind.Precondition,
       );
     }
-
-    const tsSchemaFile =
-      schemaFiles.find((f) => f === "schema.ts") ??
-      schemaFiles.find((f) => f.endsWith(".ts") && f !== "relations.ts");
-    if (!tsSchemaFile) {
-      throw new DyadError(
-        "drizzle-kit introspect did not generate any schema files.",
-        DyadErrorKind.Internal,
-      );
-    }
-
-    logger.info(`Using introspected schema file: ${tsSchemaFile}`);
-
-    // 8. Push config pointing at the introspected schema
-    const pushConfigPath = await createTempDrizzleConfig({
-      tmpDir,
-      configName: "drizzle-push.config.js",
-      schemaPath: path.join(schemaOutDir, tsSchemaFile),
-    });
-
-    return {
-      projectId,
-      devBranchId,
-      prodBranchId,
-      devUri,
-      prodUri,
-      appPath,
-      tmpDir,
-      pushConfigPath,
-      cleanup,
-    };
-  } catch (err) {
-    await cleanup();
-    throw err;
   }
+
+  return {
+    projectId,
+    devBranchId,
+    prodBranchId,
+    devUri,
+    prodUri,
+    appPath,
+    workDir,
+  };
 }
