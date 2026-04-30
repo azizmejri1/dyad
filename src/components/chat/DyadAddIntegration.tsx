@@ -9,7 +9,7 @@ import { useLoadApp } from "@/hooks/useLoadApp";
 import { useStreamChat } from "@/hooks/useStreamChat";
 import { useNeon } from "@/hooks/useNeon";
 import { useTranslation } from "react-i18next";
-import { isNextJsProject } from "@/lib/framework_constants";
+import { isNeonSupportedFramework } from "@/lib/framework_constants";
 import { CheckCircle2, Database, ExternalLink, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DyadCard, DyadCardHeader, DyadBadge } from "./DyadCardPrimitives";
@@ -35,7 +35,7 @@ export const DyadAddIntegration: React.FC<DyadAddIntegrationProps> = ({
   const chatId = useAtomValue(selectedChatIdAtom);
   const { app } = useLoadApp(appId);
   const { projectInfo, isLoadingBranches } = useNeon(appId);
-  const isNextJs = isNextJsProject({
+  const isNeonSupported = isNeonSupportedFramework({
     files: app?.files,
     frameworkType: app?.frameworkType ?? null,
   });
@@ -62,15 +62,15 @@ export const DyadAddIntegration: React.FC<DyadAddIntegrationProps> = ({
   // Determine which providers to show
   const availableProviders = (() => {
     // If a specific provider was requested, show only that one
-    // (but fall back to supabase if neon was requested for non-Next.js)
+    // (but fall back to supabase if neon was requested for an unsupported framework)
     if (requestedProvider) {
-      if (requestedProvider === "neon" && !isNextJs) {
+      if (requestedProvider === "neon" && !isNeonSupported) {
         return providerOptions.filter((p) => p.id === "supabase");
       }
       return providerOptions.filter((p) => p.id === requestedProvider);
     }
-    // No provider specified: show neon only for Next.js projects
-    if (!isNextJs) {
+    // No provider specified: show neon only for frameworks that support it
+    if (!isNeonSupported) {
       return providerOptions.filter((p) => p.id !== "neon");
     }
     return providerOptions;
