@@ -1131,7 +1131,7 @@ This conversation includes one or more image attachments. When the user uploads 
             system: systemPromptOverride,
             tools,
             messages: chatMessages.filter((m) => m.content),
-            onFinish: (response) => {
+            onFinish: async (response) => {
               const totalTokens = response.usage?.totalTokens;
 
               if (typeof totalTokens === "number") {
@@ -1140,7 +1140,7 @@ This conversation includes one or more image attachments. When the user uploads 
                 maxTokensUsed = Math.max(maxTokensUsed ?? 0, totalTokens);
 
                 // Persist the aggregated token usage on the placeholder assistant message
-                void db
+                await db
                   .update(messages)
                   .set({ maxTokensUsed: maxTokensUsed })
                   .where(eq(messages.id, placeholderAssistantMessage.id))
