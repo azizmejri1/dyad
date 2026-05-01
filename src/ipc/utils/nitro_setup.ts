@@ -32,8 +32,6 @@ async function writeNitroConfigIfMissing(
 }
 
 export interface EnsureNitroResult {
-  /** Whether any new Nitro scaffolding was added (false on idempotent re-run). */
-  wasAdded: boolean;
   /** Non-fatal warnings produced during package install. */
   warningMessages: string[];
 }
@@ -81,10 +79,6 @@ export async function ensureNitroOnViteApp(
     });
 
     return {
-      wasAdded:
-        rulesBackup.wasAppended ||
-        (nitroConfigResult?.wasCreated ?? false) ||
-        serverDirCreated,
       warningMessages: result.warningMessages,
     };
   } catch (error) {
