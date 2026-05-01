@@ -201,6 +201,11 @@ export async function executeNeonStatementsInTransaction({
 
   const sql = neon(connectionUri);
   try {
+    // Returning an array of unawaited query promises is intentional: the
+    // `@neondatabase/serverless` HTTP driver collects them into a single
+    // batched POST wrapped in `BEGIN`/`COMMIT`. A socket-based driver (e.g.
+    // `pg`) would expect the callback to `await` each query sequentially —
+    // do not swap drivers without revisiting this call.
     await sql.transaction((txn) => statements.map((s) => txn.query(s, [])));
     return { executed: statements.length };
   } catch (error) {

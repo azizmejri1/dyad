@@ -164,6 +164,9 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
             setShowErrorDetails(false);
             installingDepsRef.current = depsInstalled === false;
             previewMutation.reset();
+            // Clear any prior migrate error/success so the stale banner doesn't
+            // sit behind the preview dialog while the user reviews a new plan.
+            migrateMutation.reset();
             previewMutation.mutate();
             setPreviewOpen(true);
           }}
@@ -267,6 +270,10 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
                     setPreviewOpen(true);
                     return;
                   }
+                  // Deps were installed during preview if needed; the migrate
+                  // step itself never installs anything, so make sure the
+                  // in-flight label doesn't claim otherwise.
+                  installingDepsRef.current = false;
                   migrateMutation.mutate(migrationId);
                 }}
               >

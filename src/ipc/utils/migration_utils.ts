@@ -53,11 +53,13 @@ const PROD_INTROSPECT_TTL_MS = 5 * 60 * 1000;
 // =============================================================================
 
 /**
- * Finds the production (default) branch for a Neon project.
+ * Finds the production (default) branch for a Neon project. `updatedAt` is
+ * the branch's `updated_at` timestamp from Neon — captured at preview time
+ * and re-checked at apply time to reject stale plans (see migration_plan_store).
  */
 export async function getProductionBranchId(
   projectId: string,
-): Promise<{ branchId: string }> {
+): Promise<{ branchId: string; updatedAt: string }> {
   const neonClient = await getNeonClient();
   const response = await neonClient.listProjectBranches({ projectId });
 
@@ -76,7 +78,7 @@ export async function getProductionBranchId(
     );
   }
 
-  return { branchId: prodBranch.id };
+  return { branchId: prodBranch.id, updatedAt: prodBranch.updated_at };
 }
 
 // =============================================================================
@@ -1177,6 +1179,7 @@ export interface MigrationContext {
   projectId: string;
   devBranchId: string;
   prodBranchId: string;
+  prodUpdatedAt: string;
   devUri: string;
   prodUri: string;
   appPath: string;
@@ -1191,7 +1194,8 @@ export async function prepareMigrationContext({
   // 1. Resolve branches
   const { appData, branchId: devBranchId } = await getAppWithNeonBranch(appId);
   const projectId = appData.neonProjectId!;
-  const { branchId: prodBranchId } = await getProductionBranchId(projectId);
+  const { branchId: prodBranchId, updatedAt: prodUpdatedAt } =
+    await getProductionBranchId(projectId);
 
   logger.info(
     `Resolved branches — dev: ${devBranchId}, prod: ${prodBranchId}, project: ${projectId}`,
@@ -1288,6 +1292,7 @@ export async function prepareMigrationContext({
     projectId,
     devBranchId,
     prodBranchId,
+    prodUpdatedAt,
     devUri,
     prodUri,
     appPath,

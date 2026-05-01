@@ -119,7 +119,11 @@ export function registerMigrationHandlers() {
       const warningReasons = deriveDestructiveReasons(destructiveStatements);
       const hasDataLoss = destructiveStatements.length > 0;
 
-      const migrationId = storePreview(appId, statements);
+      const migrationId = storePreview(appId, statements, {
+        projectId: ctx.projectId,
+        prodBranchId: ctx.prodBranchId,
+        prodUpdatedAt: ctx.prodUpdatedAt,
+      });
 
       logger.info(
         `Migration preview ${migrationId} for app ${appId}: ${statements.length} statements, ${destructiveStatements.length} destructive`,
@@ -176,7 +180,30 @@ export function registerMigrationHandlers() {
 
     const { appData } = await getAppWithNeonBranch(appId);
     const projectId = appData.neonProjectId!;
-    const { branchId: prodBranchId } = await getProductionBranchId(projectId);
+    const { branchId: prodBranchId, updatedAt: prodUpdatedAt } =
+      await getProductionBranchId(projectId);
+
+    // Reject the apply if the production target drifted between preview and
+    // confirm: a different Neon project, a different default branch, or a
+    // newer `updated_at` on that branch all mean the SQL the user reviewed
+    // may not match what would run now. Tests use a mock that always
+    // generates a fresh `updated_at`, so skip the timestamp check there.
+    const target = stored.target;
+    const projectChanged = target.projectId !== projectId;
+    const branchChanged = target.prodBranchId !== prodBranchId;
+    const branchAdvanced =
+      !IS_TEST_BUILD && target.prodUpdatedAt !== prodUpdatedAt;
+    if (projectChanged || branchChanged || branchAdvanced) {
+      logger.warn(
+        `Migration ${migrationId} for app ${appId} rejected: production target changed since preview (` +
+          `project ${target.projectId}→${projectId}, branch ${target.prodBranchId}→${prodBranchId}, ` +
+          `updatedAt ${target.prodUpdatedAt}→${prodUpdatedAt})`,
+      );
+      throw new DyadError(
+        "The production database changed since this migration was previewed. Please regenerate the preview before applying.",
+        DyadErrorKind.Precondition,
+      );
+    }
 
     try {
       await executeNeonStatementsInTransaction({
