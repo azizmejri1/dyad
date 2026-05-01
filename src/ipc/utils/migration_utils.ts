@@ -959,6 +959,56 @@ export async function introspectProdWithCache({
 // =============================================================================
 
 /**
+ * Verifies the on-disk artifacts produced by `drizzle-kit generate` are
+ * complete: every journal entry must reference an existing SQL file and
+ * matching snapshot. We can settle the spawn early on idle (drizzle-kit's
+ * neon driver leaves a websocket open that prevents a clean process exit),
+ * so we need a separate signal that the work actually finished. A complete
+ * journal whose referenced files all exist means drizzle-kit got past the
+ * write phase before we killed it; a missing file means we settled too
+ * early and the plan would be partial / incorrect.
+ *
+ * Returns the number of complete entries (0 means drizzle-kit reported "no
+ * schema changes" and never wrote a journal).
+ */
+async function assertGenerateArtifactsComplete(
+  drizzleDir: string,
+): Promise<number> {
+  const journalPath = path.join(drizzleDir, "meta", "_journal.json");
+  let entries: Array<{ idx: number; tag: string }>;
+  try {
+    const journal = JSON.parse(await fs.readFile(journalPath, "utf-8")) as {
+      entries?: Array<{ idx: number; tag: string }>;
+    };
+    entries = journal.entries ?? [];
+  } catch {
+    // No journal at all — drizzle-kit reported no schema changes. Nothing to
+    // validate. Callers treat this as a no-op generate.
+    return 0;
+  }
+
+  for (const entry of entries) {
+    const sqlPath = path.join(drizzleDir, `${entry.tag}.sql`);
+    const snapshotPath = path.join(
+      drizzleDir,
+      "meta",
+      `${String(entry.idx).padStart(4, "0")}_snapshot.json`,
+    );
+    try {
+      await fs.access(sqlPath);
+      await fs.access(snapshotPath);
+    } catch {
+      throw new DyadError(
+        `drizzle-kit generate left an incomplete journal: entry ${entry.tag} is missing its SQL or snapshot file. The process likely settled before drizzle-kit finished writing artifacts.`,
+        DyadErrorKind.External,
+      );
+    }
+  }
+
+  return entries.length;
+}
+
+/**
  * Runs `drizzle-kit generate --name=baseline` against an introspected prod
  * schema, then overwrites the produced baseline SQL file with a constant
  * comment so applying it is a no-op. The snapshot is left untouched — that
@@ -1023,22 +1073,26 @@ export async function runBaselineGenerate({
     );
   }
 
-  // Find the baseline file via the journal's first entry. drizzle-kit names
-  // the file randomly on some versions even with --name=baseline, so we
-  // can't hardcode a path.
-  const journalPath = path.join(drizzleDir, "meta", "_journal.json");
-  let firstEntry: { idx: number; tag: string } | undefined;
-  try {
-    const journal = JSON.parse(await fs.readFile(journalPath, "utf-8")) as {
-      entries?: Array<{ idx: number; tag: string }>;
-    };
-    firstEntry = journal.entries?.[0];
-  } catch {
+  // Verify drizzle-kit finished writing its artifacts before we settled.
+  // Idle-termination is a best-effort signal (the neon driver keeps the
+  // websocket open after work completes), so a journal with missing SQL or
+  // snapshot files means we killed the process mid-write and the plan would
+  // be partial.
+  const completeEntryCount = await assertGenerateArtifactsComplete(drizzleDir);
+  if (completeEntryCount === 0) {
     // No journal — drizzle-kit said "no schema changes" (empty prod). No
     // baseline file to neutralize; the next diff-generate will start fresh.
     return { baselineProduced: false };
   }
 
+  // Find the baseline file via the journal's first entry. drizzle-kit names
+  // the file randomly on some versions even with --name=baseline, so we
+  // can't hardcode a path.
+  const journalPath = path.join(drizzleDir, "meta", "_journal.json");
+  const journal = JSON.parse(await fs.readFile(journalPath, "utf-8")) as {
+    entries?: Array<{ idx: number; tag: string }>;
+  };
+  const firstEntry = journal.entries?.[0];
   if (!firstEntry) {
     return { baselineProduced: false };
   }
@@ -1108,6 +1162,11 @@ export async function runDiffGenerate({
       DyadErrorKind.External,
     );
   }
+
+  // Same idle-termination guard as the baseline run: verify every journal
+  // entry has its SQL + snapshot on disk before letting the caller read the
+  // pending migrations.
+  await assertGenerateArtifactsComplete(drizzleDir);
 }
 
 // =============================================================================
