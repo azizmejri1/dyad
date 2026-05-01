@@ -171,6 +171,23 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = ipc.events.misc.onErrorToast(({ message, action }) => {
+      showError(message, {
+        action: action
+          ? {
+              label: action.label,
+              onClick: () => {
+                ipc.system.openExternalUrl(action.url);
+              },
+            }
+          : undefined,
+      });
+    });
+    void ipc.misc.rendererErrorToastReady(undefined);
+    return () => unsubscribe();
+  }, []);
+
   // Agent v2 tool consent requests - queue consents instead of overwriting
   const setPendingAgentConsents = useSetAtom(pendingAgentConsentsAtom);
   const setPendingQuestionnaire = useSetAtom(pendingQuestionnaireAtom);

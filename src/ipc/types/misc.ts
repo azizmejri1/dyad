@@ -363,6 +363,12 @@ export const miscContracts = {
     output: z.void(),
   }),
 
+  rendererErrorToastReady: defineContract({
+    channel: "renderer:error-toast-ready",
+    input: z.void(),
+    output: z.void(),
+  }),
+
   // Problems
   checkProblems: defineContract({
     channel: "check-problems",
@@ -409,6 +415,19 @@ export const miscEvents = {
   chatStreamEnd: defineEvent({
     channel: "chat:stream:end",
     payload: z.object({ chatId: z.number() }),
+  }),
+
+  errorToast: defineEvent({
+    channel: "toast:error",
+    payload: z.object({
+      message: z.string(),
+      action: z
+        .object({
+          label: z.string(),
+          url: z.string(),
+        })
+        .optional(),
+    }),
   }),
 } as const;
 

@@ -9,7 +9,12 @@ import {
   VertexProviderSetting,
   migrateStoredSettings,
 } from "../lib/schemas";
-import { safeStorage } from "electron";
+import {
+  BrowserWindow,
+  safeStorage,
+  type WebContents,
+  type BrowserWindow as BrowserWindowInstance,
+} from "electron";
 import { v4 as uuidv4 } from "uuid";
 import log from "electron-log";
 import { DEFAULT_TEMPLATE_ID } from "@/shared/templates";
@@ -52,6 +57,18 @@ const DEFAULT_SETTINGS: UserSettings = {
 };
 
 const SETTINGS_FILE = "user-settings.json";
+const RESTORE_SETTINGS_DOCS_URL =
+  "https://www.dyad.sh/docs/guides/migrate-restore#restoring-settings-from-backup";
+interface RendererErrorToast {
+  message: string;
+  action?: {
+    label: string;
+    url: string;
+  };
+}
+
+const pendingRendererErrors: RendererErrorToast[] = [];
+const rendererErrorToastReadyWebContents = new WeakSet<WebContents>();
 
 export function getSettingsFilePath(): string {
   return path.join(getUserDataPath(), SETTINGS_FILE);
@@ -64,124 +81,7 @@ export function readSettings(): UserSettings {
       fs.writeFileSync(filePath, JSON.stringify(DEFAULT_SETTINGS, null, 2));
       return DEFAULT_SETTINGS;
     }
-    const rawSettings = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    const combinedSettings: UserSettings = {
-      ...DEFAULT_SETTINGS,
-      ...rawSettings,
-    };
-    const supabase = combinedSettings.supabase;
-    if (supabase) {
-      // Decrypt legacy tokens (kept but ignored)
-      if (supabase.refreshToken) {
-        const encryptionType = supabase.refreshToken.encryptionType;
-        if (encryptionType) {
-          supabase.refreshToken = {
-            value: decrypt(supabase.refreshToken),
-            encryptionType,
-          };
-        }
-      }
-      if (supabase.accessToken) {
-        const encryptionType = supabase.accessToken.encryptionType;
-        if (encryptionType) {
-          supabase.accessToken = {
-            value: decrypt(supabase.accessToken),
-            encryptionType,
-          };
-        }
-      }
-      // Decrypt tokens for each organization in the organizations map
-      if (supabase.organizations) {
-        for (const orgId in supabase.organizations) {
-          const org = supabase.organizations[orgId];
-          if (org.accessToken) {
-            const encryptionType = org.accessToken.encryptionType;
-            if (encryptionType) {
-              org.accessToken = {
-                value: decrypt(org.accessToken),
-                encryptionType,
-              };
-            }
-          }
-          if (org.refreshToken) {
-            const encryptionType = org.refreshToken.encryptionType;
-            if (encryptionType) {
-              org.refreshToken = {
-                value: decrypt(org.refreshToken),
-                encryptionType,
-              };
-            }
-          }
-        }
-      }
-    }
-    const neon = combinedSettings.neon;
-    if (neon) {
-      if (neon.refreshToken) {
-        const encryptionType = neon.refreshToken.encryptionType;
-        if (encryptionType) {
-          neon.refreshToken = {
-            value: decrypt(neon.refreshToken),
-            encryptionType,
-          };
-        }
-      }
-      if (neon.accessToken) {
-        const encryptionType = neon.accessToken.encryptionType;
-        if (encryptionType) {
-          neon.accessToken = {
-            value: decrypt(neon.accessToken),
-            encryptionType,
-          };
-        }
-      }
-    }
-    if (combinedSettings.githubAccessToken) {
-      const encryptionType = combinedSettings.githubAccessToken.encryptionType;
-      combinedSettings.githubAccessToken = {
-        value: decrypt(combinedSettings.githubAccessToken),
-        encryptionType,
-      };
-    }
-    if (combinedSettings.vercelAccessToken) {
-      const encryptionType = combinedSettings.vercelAccessToken.encryptionType;
-      combinedSettings.vercelAccessToken = {
-        value: decrypt(combinedSettings.vercelAccessToken),
-        encryptionType,
-      };
-    }
-    for (const provider in combinedSettings.providerSettings) {
-      if (combinedSettings.providerSettings[provider].apiKey) {
-        const encryptionType =
-          combinedSettings.providerSettings[provider].apiKey.encryptionType;
-        combinedSettings.providerSettings[provider].apiKey = {
-          value: decrypt(combinedSettings.providerSettings[provider].apiKey),
-          encryptionType,
-        };
-      }
-      // Decrypt Vertex service account key if present
-      const v = combinedSettings.providerSettings[
-        provider
-      ] as VertexProviderSetting;
-      if (provider === "vertex" && v?.serviceAccountKey) {
-        const encryptionType = v.serviceAccountKey.encryptionType;
-        v.serviceAccountKey = {
-          value: decrypt(v.serviceAccountKey),
-          encryptionType,
-        };
-      }
-    }
-
-    // Validate stored settings (allows deprecated values like "agent" chat mode)
-    const storedSettings = StoredUserSettingsSchema.parse(combinedSettings);
-    // "conservative" is deprecated, use undefined to use the default value
-    if (storedSettings.proSmartContextOption === "conservative") {
-      storedSettings.proSmartContextOption = undefined;
-    }
-    // Migrate stored settings to active settings (converts deprecated values)
-    const migratedSettings = migrateStoredSettings(storedSettings);
-    // Validate the migrated settings against the active schema
-    return UserSettingsSchema.parse(migratedSettings);
+    return readExistingSettingsFile(filePath);
   } catch (error) {
     logger.error("Error reading settings:", error);
     return DEFAULT_SETTINGS;
@@ -212,8 +112,8 @@ export async function readEffectiveSettings(): Promise<UserSettings> {
 export function writeSettings(settings: Partial<UserSettings>): void {
   try {
     const filePath = getSettingsFilePath();
-    const currentSettings = readSettings();
-    const newSettings = { ...currentSettings, ...settings };
+    const settingsForWrite = readSettingsForWrite(filePath);
+    const newSettings = { ...settingsForWrite.settings, ...settings };
     if (newSettings.githubAccessToken) {
       newSettings.githubAccessToken = encrypt(
         newSettings.githubAccessToken.value,
@@ -275,9 +175,236 @@ export function writeSettings(settings: Partial<UserSettings>): void {
     }
     // Use StoredUserSettingsSchema for writing to maintain backwards compatibility
     const validatedSettings = StoredUserSettingsSchema.parse(newSettings);
-    fs.writeFileSync(filePath, JSON.stringify(validatedSettings, null, 2));
+    writeSettingsFileAtomically(
+      filePath,
+      JSON.stringify(validatedSettings, null, 2),
+      {
+        preserveUnreadableBackup: settingsForWrite.wasUnreadable,
+      },
+    );
   } catch (error) {
     logger.error("Error writing settings:", error);
+  }
+}
+
+function readExistingSettingsFile(filePath: string): UserSettings {
+  const rawSettings = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  const combinedSettings: UserSettings = {
+    ...DEFAULT_SETTINGS,
+    ...rawSettings,
+  };
+  const supabase = combinedSettings.supabase;
+  if (supabase) {
+    // Decrypt legacy tokens (kept but ignored)
+    if (supabase.refreshToken) {
+      const encryptionType = supabase.refreshToken.encryptionType;
+      if (encryptionType) {
+        supabase.refreshToken = {
+          value: decrypt(supabase.refreshToken),
+          encryptionType,
+        };
+      }
+    }
+    if (supabase.accessToken) {
+      const encryptionType = supabase.accessToken.encryptionType;
+      if (encryptionType) {
+        supabase.accessToken = {
+          value: decrypt(supabase.accessToken),
+          encryptionType,
+        };
+      }
+    }
+    // Decrypt tokens for each organization in the organizations map
+    if (supabase.organizations) {
+      for (const orgId in supabase.organizations) {
+        const org = supabase.organizations[orgId];
+        if (org.accessToken) {
+          const encryptionType = org.accessToken.encryptionType;
+          if (encryptionType) {
+            org.accessToken = {
+              value: decrypt(org.accessToken),
+              encryptionType,
+            };
+          }
+        }
+        if (org.refreshToken) {
+          const encryptionType = org.refreshToken.encryptionType;
+          if (encryptionType) {
+            org.refreshToken = {
+              value: decrypt(org.refreshToken),
+              encryptionType,
+            };
+          }
+        }
+      }
+    }
+  }
+  const neon = combinedSettings.neon;
+  if (neon) {
+    if (neon.refreshToken) {
+      const encryptionType = neon.refreshToken.encryptionType;
+      if (encryptionType) {
+        neon.refreshToken = {
+          value: decrypt(neon.refreshToken),
+          encryptionType,
+        };
+      }
+    }
+    if (neon.accessToken) {
+      const encryptionType = neon.accessToken.encryptionType;
+      if (encryptionType) {
+        neon.accessToken = {
+          value: decrypt(neon.accessToken),
+          encryptionType,
+        };
+      }
+    }
+  }
+  if (combinedSettings.githubAccessToken) {
+    const encryptionType = combinedSettings.githubAccessToken.encryptionType;
+    combinedSettings.githubAccessToken = {
+      value: decrypt(combinedSettings.githubAccessToken),
+      encryptionType,
+    };
+  }
+  if (combinedSettings.vercelAccessToken) {
+    const encryptionType = combinedSettings.vercelAccessToken.encryptionType;
+    combinedSettings.vercelAccessToken = {
+      value: decrypt(combinedSettings.vercelAccessToken),
+      encryptionType,
+    };
+  }
+  for (const provider in combinedSettings.providerSettings) {
+    if (combinedSettings.providerSettings[provider].apiKey) {
+      const encryptionType =
+        combinedSettings.providerSettings[provider].apiKey.encryptionType;
+      combinedSettings.providerSettings[provider].apiKey = {
+        value: decrypt(combinedSettings.providerSettings[provider].apiKey),
+        encryptionType,
+      };
+    }
+    // Decrypt Vertex service account key if present
+    const v = combinedSettings.providerSettings[
+      provider
+    ] as VertexProviderSetting;
+    if (provider === "vertex" && v?.serviceAccountKey) {
+      const encryptionType = v.serviceAccountKey.encryptionType;
+      v.serviceAccountKey = {
+        value: decrypt(v.serviceAccountKey),
+        encryptionType,
+      };
+    }
+  }
+
+  // Validate stored settings (allows deprecated values like "agent" chat mode)
+  const storedSettings = StoredUserSettingsSchema.parse(combinedSettings);
+  // "conservative" is deprecated, use undefined to use the default value
+  if (storedSettings.proSmartContextOption === "conservative") {
+    storedSettings.proSmartContextOption = undefined;
+  }
+  // Migrate stored settings to active settings (converts deprecated values)
+  const migratedSettings = migrateStoredSettings(storedSettings);
+  // Validate the migrated settings against the active schema
+  return UserSettingsSchema.parse(migratedSettings);
+}
+
+function readSettingsForWrite(filePath: string): {
+  settings: UserSettings;
+  wasUnreadable: boolean;
+} {
+  if (!fs.existsSync(filePath)) {
+    return { settings: DEFAULT_SETTINGS, wasUnreadable: false };
+  }
+
+  try {
+    return {
+      settings: readExistingSettingsFile(filePath),
+      wasUnreadable: false,
+    };
+  } catch (error) {
+    logger.error("Existing settings file is unreadable:", error);
+    notifyRendererError({
+      message:
+        "Dyad could not read your existing settings file, so it fell back to default settings.",
+      action: {
+        label: "Read restore docs",
+        url: RESTORE_SETTINGS_DOCS_URL,
+      },
+    });
+    return { settings: DEFAULT_SETTINGS, wasUnreadable: true };
+  }
+}
+
+function notifyRendererError(payload: RendererErrorToast): void {
+  const windows = BrowserWindow.getAllWindows().filter((window) =>
+    rendererErrorToastReadyWebContents.has(window.webContents),
+  );
+  if (windows.length === 0) {
+    pendingRendererErrors.push(payload);
+    return;
+  }
+  sendRendererErrorToast(windows, payload);
+}
+
+export function notifyRendererErrorToastListenerReady(
+  webContents: WebContents,
+): void {
+  rendererErrorToastReadyWebContents.add(webContents);
+  const window = BrowserWindow.fromWebContents(webContents);
+  if (window) {
+    flushPendingRendererErrors([window]);
+  }
+}
+
+function flushPendingRendererErrors(windows: BrowserWindowInstance[]): void {
+  if (pendingRendererErrors.length === 0) {
+    return;
+  }
+
+  const pending = pendingRendererErrors.splice(0);
+  for (const payload of pending) {
+    sendRendererErrorToast(windows, payload);
+  }
+}
+
+function sendRendererErrorToast(
+  windows: BrowserWindowInstance[],
+  payload: RendererErrorToast,
+): void {
+  for (const window of windows) {
+    window.webContents.send("toast:error", payload);
+  }
+}
+
+function writeSettingsFileAtomically(
+  filePath: string,
+  contents: string,
+  options: { preserveUnreadableBackup?: boolean } = {},
+): void {
+  const tempFilePath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const backupFilePath = `${filePath}.bak`;
+  const recoveryBackupFilePath = `${filePath}.recovery-${Date.now()}.bak`;
+
+  try {
+    fs.writeFileSync(tempFilePath, contents);
+    if (fs.existsSync(filePath)) {
+      fs.copyFileSync(
+        filePath,
+        options.preserveUnreadableBackup
+          ? recoveryBackupFilePath
+          : backupFilePath,
+      );
+    }
+    fs.renameSync(tempFilePath, filePath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+    } catch (cleanupError) {
+      logger.warn("Failed to remove temporary settings file:", cleanupError);
+    }
+    throw error;
   }
 }
 
