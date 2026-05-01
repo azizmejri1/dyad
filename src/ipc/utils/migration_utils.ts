@@ -809,6 +809,13 @@ export async function readPendingMigrationFiles(
 
 interface IntrospectCacheEntry {
   schemaTs: string;
+  // Captured at the time the schema was introspected. A later preview that
+  // sees a newer `updated_at` on the same branch must miss the cache —
+  // otherwise it would diff against a stale prod snapshot while recording
+  // the *current* timestamp on the plan, and the apply-time freshness check
+  // would happily wave through SQL generated from a baseline that no longer
+  // matches production.
+  prodUpdatedAt: string;
   expiresAt: number;
 }
 
@@ -906,12 +913,20 @@ export async function introspectBranch({
 export async function introspectProdWithCache({
   appId,
   prodBranchId,
+  prodUpdatedAt,
   appPath,
   workDir,
   prodConnectionUri,
 }: {
   appId: number;
   prodBranchId: string;
+  /**
+   * The branch's `updated_at` captured for *this* preview. The cache is
+   * bypassed and re-populated when this differs from the cached entry, so
+   * an external schema change during the TTL window can never silently
+   * resurface as a stale baseline.
+   */
+  prodUpdatedAt: string;
   appPath: string;
   workDir: string;
   prodConnectionUri: string;
@@ -922,11 +937,22 @@ export async function introspectProdWithCache({
   const key = makeCacheKey(appId, prodBranchId);
 
   const cached = prodIntrospectCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    cached.prodUpdatedAt === prodUpdatedAt
+  ) {
     logger.info(`Prod introspect cache HIT for ${key}`);
     await fs.mkdir(outDir, { recursive: true });
     await fs.writeFile(schemaPath, cached.schemaTs, "utf-8");
     return schemaPath;
+  }
+
+  if (cached && cached.prodUpdatedAt !== prodUpdatedAt) {
+    logger.info(
+      `Prod introspect cache evicted for ${key}: branch advanced ${cached.prodUpdatedAt}→${prodUpdatedAt}`,
+    );
+    prodIntrospectCache.delete(key);
   }
 
   logger.info(`Prod introspect cache MISS for ${key}; running introspect.`);
@@ -947,6 +973,7 @@ export async function introspectProdWithCache({
     const schemaTs = await fs.readFile(resolvedSchemaPath, "utf-8");
     prodIntrospectCache.set(key, {
       schemaTs,
+      prodUpdatedAt,
       expiresAt: Date.now() + PROD_INTROSPECT_TTL_MS,
     });
   } catch (err) {

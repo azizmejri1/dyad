@@ -81,6 +81,7 @@ export function registerMigrationHandlers() {
       const prodSchemaPath = await introspectProdWithCache({
         appId,
         prodBranchId: ctx.prodBranchId,
+        prodUpdatedAt: ctx.prodUpdatedAt,
         appPath: ctx.appPath,
         workDir: ctx.workDir,
         prodConnectionUri: ctx.prodUri,
