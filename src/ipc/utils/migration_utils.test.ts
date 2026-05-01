@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectDestructiveStatements,
   parseDrizzleMigrationFile,
-  deriveWarningsFromDestructive,
+  deriveDestructiveReasons,
 } from "./migration_utils";
 
 // Sample inputs are anchored to the format drizzle-kit `generate` writes:
@@ -126,22 +126,19 @@ describe("detectDestructiveStatements", () => {
   });
 });
 
-describe("deriveWarningsFromDestructive", () => {
-  it("produces a unique human-readable warning per destructive reason", () => {
-    const warnings = deriveWarningsFromDestructive([
+describe("deriveDestructiveReasons", () => {
+  it("returns a unique reason code per destructive statement", () => {
+    const reasons = deriveDestructiveReasons([
       { index: 0, reason: "drop_table" },
       { index: 1, reason: "drop_column" },
       { index: 2, reason: "drop_column" }, // duplicate reason
       { index: 3, reason: "alter_column_type" },
     ]);
 
-    expect(warnings).toHaveLength(3);
-    expect(warnings.some((w) => /table.*dropped/i.test(w))).toBe(true);
-    expect(warnings.some((w) => /column.*dropped/i.test(w))).toBe(true);
-    expect(warnings.some((w) => /type.*changed/i.test(w))).toBe(true);
+    expect(reasons).toEqual(["drop_table", "drop_column", "alter_column_type"]);
   });
 
   it("returns empty when there are no destructive statements", () => {
-    expect(deriveWarningsFromDestructive([])).toEqual([]);
+    expect(deriveDestructiveReasons([])).toEqual([]);
   });
 });

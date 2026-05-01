@@ -247,47 +247,19 @@ export async function spawnDrizzleKit({
     return mockDrizzleKitRun({ args, cwd });
   }
 
-  const drizzleKitBin = getDrizzleKitPath(appPath);
-
-  // Create a node_modules symlink in the working directory so that generated
-  // schema files can resolve drizzle-orm and other dependencies through
-  // standard Node.js module resolution (walking up to find node_modules),
-  // in addition to the NODE_PATH env var set below.
-  const nodeModulesPath = path.join(appPath, "node_modules");
-  const symlinkTarget = path.join(cwd, "node_modules");
-  try {
-    await fs.symlink(nodeModulesPath, symlinkTarget, "junction");
-  } catch (symlinkErr) {
-    logger.warn(
-      `Failed to create node_modules symlink: ${symlinkErr}. Falling back to NODE_PATH.`,
-    );
-  }
+  const { drizzleKitBin, forkOptions } = await prepareDrizzleKitForkOptions({
+    appPath,
+    cwd,
+    connectionUri,
+    serviceName: "drizzle-kit",
+  });
 
   return new Promise((resolve, reject) => {
     logger.info(`Running drizzle-kit: ${drizzleKitBin} ${args.join(" ")}`);
 
     let proc;
     try {
-      proc = utilityProcess.fork(drizzleKitBin, args, {
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        serviceName: "drizzle-kit",
-        env: Object.fromEntries(
-          Object.entries({
-            // Minimal env for Node.js / drizzle-kit to function.
-            // Deliberately NOT spreading process.env to avoid leaking
-            // secrets (OAuth tokens, API keys, etc.) to the subprocess.
-            PATH: process.env.PATH,
-            HOME: process.env.HOME,
-            USERPROFILE: process.env.USERPROFILE,
-            TEMP: process.env.TEMP,
-            TMP: process.env.TMP,
-            TMPDIR: process.env.TMPDIR,
-            NODE_PATH: nodeModulesPath,
-            DRIZZLE_DATABASE_URL: connectionUri,
-          }).filter(([, v]) => v !== undefined),
-        ),
-      });
+      proc = utilityProcess.fork(drizzleKitBin, args, forkOptions);
     } catch (error) {
       reject(
         new DyadError(
@@ -371,6 +343,66 @@ interface SpawnDrizzleKitWithEarlyTerminationResult {
   stdout: string;
   stderr: string;
   terminatedReason: "shouldTerminateEarly" | "exit" | "timeout" | "idle";
+  /** Process exit code. `null` when we settled before the child exited. */
+  exitCode: number | null;
+}
+
+interface DrizzleKitForkSetup {
+  drizzleKitBin: string;
+  forkOptions: Parameters<typeof utilityProcess.fork>[2];
+}
+
+/**
+ * Builds the drizzle-kit utility-process fork options used by both spawn
+ * variants: minimal env (no leaked secrets), DRIZZLE_DATABASE_URL injection,
+ * and a node_modules symlink under cwd so generated schema files can resolve
+ * drizzle-orm via standard Node module resolution.
+ */
+async function prepareDrizzleKitForkOptions({
+  appPath,
+  cwd,
+  connectionUri,
+  serviceName,
+}: {
+  appPath: string;
+  cwd: string;
+  connectionUri: string;
+  serviceName: string;
+}): Promise<DrizzleKitForkSetup> {
+  const drizzleKitBin = getDrizzleKitPath(appPath);
+  const nodeModulesPath = path.join(appPath, "node_modules");
+  const symlinkTarget = path.join(cwd, "node_modules");
+  try {
+    await fs.symlink(nodeModulesPath, symlinkTarget, "junction");
+  } catch (symlinkErr) {
+    logger.warn(
+      `Failed to create node_modules symlink: ${symlinkErr}. Falling back to NODE_PATH.`,
+    );
+  }
+
+  return {
+    drizzleKitBin,
+    forkOptions: {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      serviceName,
+      env: Object.fromEntries(
+        Object.entries({
+          // Minimal env for Node.js / drizzle-kit to function. Deliberately
+          // NOT spreading process.env to avoid leaking secrets (OAuth tokens,
+          // API keys, etc.) to the subprocess.
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          USERPROFILE: process.env.USERPROFILE,
+          TEMP: process.env.TEMP,
+          TMP: process.env.TMP,
+          TMPDIR: process.env.TMPDIR,
+          NODE_PATH: nodeModulesPath,
+          DRIZZLE_DATABASE_URL: connectionUri,
+        }).filter(([, v]) => v !== undefined),
+      ),
+    },
+  };
 }
 
 export async function spawnDrizzleKitWithEarlyTermination({
@@ -388,20 +420,16 @@ export async function spawnDrizzleKitWithEarlyTermination({
       stdout: mock.stdout,
       stderr: mock.stderr,
       terminatedReason: "exit",
+      exitCode: mock.exitCode,
     };
   }
 
-  const drizzleKitBin = getDrizzleKitPath(appPath);
-
-  const nodeModulesPath = path.join(appPath, "node_modules");
-  const symlinkTarget = path.join(cwd, "node_modules");
-  try {
-    await fs.symlink(nodeModulesPath, symlinkTarget, "junction");
-  } catch (symlinkErr) {
-    logger.warn(
-      `Failed to create node_modules symlink: ${symlinkErr}. Falling back to NODE_PATH.`,
-    );
-  }
+  const { drizzleKitBin, forkOptions } = await prepareDrizzleKitForkOptions({
+    appPath,
+    cwd,
+    connectionUri,
+    serviceName: "drizzle-kit-early",
+  });
 
   return new Promise((resolve, reject) => {
     logger.info(
@@ -410,23 +438,7 @@ export async function spawnDrizzleKitWithEarlyTermination({
 
     let proc: ReturnType<typeof utilityProcess.fork>;
     try {
-      proc = utilityProcess.fork(drizzleKitBin, args, {
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        serviceName: "drizzle-kit-early",
-        env: Object.fromEntries(
-          Object.entries({
-            PATH: process.env.PATH,
-            HOME: process.env.HOME,
-            USERPROFILE: process.env.USERPROFILE,
-            TEMP: process.env.TEMP,
-            TMP: process.env.TMP,
-            TMPDIR: process.env.TMPDIR,
-            NODE_PATH: nodeModulesPath,
-            DRIZZLE_DATABASE_URL: connectionUri,
-          }).filter(([, v]) => v !== undefined),
-        ),
-      });
+      proc = utilityProcess.fork(drizzleKitBin, args, forkOptions);
     } catch (error) {
       reject(
         new DyadError(
@@ -441,6 +453,7 @@ export async function spawnDrizzleKitWithEarlyTermination({
     let stderr = "";
     let settled = false;
     let idleTimer: NodeJS.Timeout | null = null;
+    let exitCode: number | null = null;
 
     const settle = (
       reason: SpawnDrizzleKitWithEarlyTerminationResult["terminatedReason"],
@@ -456,7 +469,7 @@ export async function spawnDrizzleKitWithEarlyTermination({
           // best-effort
         }
       }
-      resolve({ stdout, stderr, terminatedReason: reason });
+      resolve({ stdout, stderr, terminatedReason: reason, exitCode });
     };
 
     const maxTimer = setTimeout(() => settle("timeout"), maxWaitMs);
@@ -485,7 +498,8 @@ export async function spawnDrizzleKitWithEarlyTermination({
       logger.warn(`drizzle-kit (early) stderr: ${chunk}`);
     });
 
-    proc.on("exit", () => {
+    proc.on("exit", (code) => {
+      exitCode = code;
       settle("exit");
     });
 
@@ -607,7 +621,10 @@ async function resolveOutDirFromConfig({
     const content = await fs.readFile(configPath, "utf-8");
     const match = content.match(/out:\s*"([^"]+)"/);
     if (match) {
-      return match[1];
+      // createDrizzleConfig writes paths relative to workDir (the spawn cwd).
+      // Resolve against cwd so callers (and downstream readers like
+      // introspectBranch) all see the same absolute path.
+      return path.resolve(cwd, match[1]);
     }
   } catch {
     // fall through
@@ -677,24 +694,20 @@ export function detectDestructiveStatements(
   return out;
 }
 
-const DESTRUCTIVE_REASON_HUMAN: Record<DestructiveStatementReason, string> = {
-  drop_table: "A table will be dropped.",
-  drop_column: "A column will be dropped.",
-  alter_column_type: "A column's type will be changed (data conversion).",
-  truncate: "A table will be truncated.",
-  drop_schema: "A schema will be dropped.",
-};
-
-export function deriveWarningsFromDestructive(
+/**
+ * De-dupes destructive statements by reason. Reason codes are translated on
+ * the frontend so warnings respect the user's locale rather than being
+ * hardcoded English on the server.
+ */
+export function deriveDestructiveReasons(
   destructive: DestructiveStatement[],
-): string[] {
-  // De-dupe by reason so users don't see the same line N times.
+): DestructiveStatementReason[] {
   const seen = new Set<DestructiveStatementReason>();
-  const out: string[] = [];
+  const out: DestructiveStatementReason[] = [];
   for (const d of destructive) {
     if (seen.has(d.reason)) continue;
     seen.add(d.reason);
-    out.push(DESTRUCTIVE_REASON_HUMAN[d.reason]);
+    out.push(d.reason);
   }
   return out;
 }
@@ -999,6 +1012,16 @@ export async function runBaselineGenerate({
       DyadErrorKind.External,
     );
   }
+  if (
+    result.terminatedReason === "exit" &&
+    result.exitCode !== null &&
+    result.exitCode !== 0
+  ) {
+    throw new DyadError(
+      `drizzle-kit baseline generation failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim() || "no output"}`,
+      DyadErrorKind.External,
+    );
+  }
 
   // Find the baseline file via the journal's first entry. drizzle-kit names
   // the file randomly on some versions even with --name=baseline, so we
@@ -1072,6 +1095,16 @@ export async function runDiffGenerate({
   if (result.terminatedReason === "timeout") {
     throw new DyadError(
       "Migration plan generation timed out.",
+      DyadErrorKind.External,
+    );
+  }
+  if (
+    result.terminatedReason === "exit" &&
+    result.exitCode !== null &&
+    result.exitCode !== 0
+  ) {
+    throw new DyadError(
+      `drizzle-kit migration plan generation failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim() || "no output"}`,
       DyadErrorKind.External,
     );
   }

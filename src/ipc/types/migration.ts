@@ -70,7 +70,7 @@ export const MigrationPreviewResponseSchema = z.object({
   migrationId: z.string().uuid(),
   statements: z.array(z.string()),
   hasDataLoss: z.boolean(),
-  warnings: z.array(z.string()),
+  warningReasons: z.array(DestructiveStatementReasonSchema),
   destructiveStatements: z.array(DestructiveStatementSchema),
 });
 

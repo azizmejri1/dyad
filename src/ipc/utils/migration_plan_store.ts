@@ -56,6 +56,41 @@ export function consumePreview(
   return { appId: stored.appId, statements: stored.statements };
 }
 
+/**
+ * Reads a stored plan without removing it. Use this when you want to apply
+ * the plan transactionally and only remove it on success — a failed apply
+ * leaves the plan available for retry without forcing the user back through
+ * the preview workflow.
+ */
+export function peekPreview(
+  migrationId: string,
+): { appId: number; statements: string[] } | null {
+  const stored = plansById.get(migrationId);
+  if (!stored) {
+    return null;
+  }
+  if (Date.now() - stored.createdAt > PLAN_TTL_MS) {
+    logger.info(
+      `Migration plan ${migrationId} for app ${stored.appId} expired (age ${Date.now() - stored.createdAt}ms)`,
+    );
+    plansById.delete(migrationId);
+    if (idByAppId.get(stored.appId) === migrationId) {
+      idByAppId.delete(stored.appId);
+    }
+    return null;
+  }
+  return { appId: stored.appId, statements: stored.statements };
+}
+
+export function deletePreview(migrationId: string): void {
+  const stored = plansById.get(migrationId);
+  if (!stored) return;
+  plansById.delete(migrationId);
+  if (idByAppId.get(stored.appId) === migrationId) {
+    idByAppId.delete(stored.appId);
+  }
+}
+
 export function __resetForTests(): void {
   plansById.clear();
   idByAppId.clear();

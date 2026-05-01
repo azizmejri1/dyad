@@ -3,6 +3,8 @@ import {
   PLAN_TTL_MS,
   __resetForTests,
   consumePreview,
+  deletePreview,
+  peekPreview,
   storePreview,
 } from "./migration_plan_store";
 
@@ -75,5 +77,46 @@ describe("migration_plan_store", () => {
       appId: 2,
       statements: ["SELECT 'b'"],
     });
+  });
+
+  it("peekPreview returns the plan without removing it (retry-safe)", () => {
+    const id = storePreview(5, ["DROP TABLE x"]);
+
+    // Multiple peeks succeed.
+    expect(peekPreview(id)).toEqual({ appId: 5, statements: ["DROP TABLE x"] });
+    expect(peekPreview(id)).toEqual({ appId: 5, statements: ["DROP TABLE x"] });
+
+    // Plan is still consumable after peeking.
+    expect(consumePreview(id)).toEqual({
+      appId: 5,
+      statements: ["DROP TABLE x"],
+    });
+    expect(peekPreview(id)).toBeNull();
+  });
+
+  it("peekPreview returns null and evicts past TTL", () => {
+    vi.useFakeTimers();
+    const id = storePreview(8, ["SELECT 1"]);
+
+    vi.advanceTimersByTime(PLAN_TTL_MS + 1);
+
+    expect(peekPreview(id)).toBeNull();
+    // Confirm the expired entry was evicted.
+    expect(peekPreview(id)).toBeNull();
+  });
+
+  it("deletePreview removes the plan", () => {
+    const id = storePreview(11, ["TRUNCATE x"]);
+
+    deletePreview(id);
+
+    expect(peekPreview(id)).toBeNull();
+    expect(consumePreview(id)).toBeNull();
+  });
+
+  it("deletePreview is a no-op for unknown ids", () => {
+    expect(() =>
+      deletePreview("00000000-0000-0000-0000-000000000000"),
+    ).not.toThrow();
   });
 });

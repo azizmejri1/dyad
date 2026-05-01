@@ -17,14 +17,18 @@ import {
   readPendingMigrationFiles,
   parseDrizzleMigrationFile,
   detectDestructiveStatements,
-  deriveWarningsFromDestructive,
+  deriveDestructiveReasons,
   invalidateProdIntrospectCache,
   cleanupWorkDir,
   getProductionBranchId,
 } from "../utils/migration_utils";
 import { getAppWithNeonBranch } from "../utils/neon_utils";
 import { executeNeonStatementsInTransaction } from "../../neon_admin/neon_context";
-import { storePreview, consumePreview } from "../utils/migration_plan_store";
+import {
+  storePreview,
+  peekPreview,
+  deletePreview,
+} from "../utils/migration_plan_store";
 
 // =============================================================================
 // Handler Registration
@@ -112,7 +116,7 @@ export function registerMigrationHandlers() {
       }
 
       const destructiveStatements = detectDestructiveStatements(statements);
-      const warnings = deriveWarningsFromDestructive(destructiveStatements);
+      const warningReasons = deriveDestructiveReasons(destructiveStatements);
       const hasDataLoss = destructiveStatements.length > 0;
 
       const migrationId = storePreview(appId, statements);
@@ -125,7 +129,7 @@ export function registerMigrationHandlers() {
         migrationId,
         statements,
         hasDataLoss,
-        warnings,
+        warningReasons,
         destructiveStatements,
       };
     } finally {
@@ -143,7 +147,12 @@ export function registerMigrationHandlers() {
     const { appId, migrationId } = params;
     logger.info(`Applying migration ${migrationId} for app ${appId}`);
 
-    const stored = consumePreview(migrationId);
+    // Peek first so a failed apply (e.g., transient network error during the
+    // Neon HTTP transaction) leaves the plan in the store; the user can retry
+    // without redoing the preview workflow. We only delete after the
+    // transaction commits successfully (or after we determine the plan is a
+    // no-op / does not belong to this app).
+    const stored = peekPreview(migrationId);
     if (!stored) {
       throw new DyadError(
         "Migration plan expired or already applied. Click Migrate to Production again to compute a fresh plan.",
@@ -161,6 +170,7 @@ export function registerMigrationHandlers() {
       logger.info(
         `Schemas already in sync for app ${appId}, nothing to migrate.`,
       );
+      deletePreview(migrationId);
       return { success: true, noChanges: true };
     }
 
@@ -174,6 +184,7 @@ export function registerMigrationHandlers() {
         branchId: prodBranchId,
         statements: stored.statements,
       });
+      deletePreview(migrationId);
       logger.info(
         `Migration ${migrationId} applied successfully for app ${appId}`,
       );

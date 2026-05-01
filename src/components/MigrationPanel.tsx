@@ -192,7 +192,12 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
           open={previewOpen}
           onOpenChange={(open) => {
             setPreviewOpen(open);
-            if (!open) previewMutation.reset();
+            // Don't reset() while the mutation is in-flight: doing so flips
+            // isPending back to false and re-enables the trigger button, but
+            // the backend preview keeps running. A second click would then
+            // race the first request through the same deterministic work
+            // dir, with each ensureFreshWorkDir wiping the other's files.
+            if (!open && !previewMutation.isPending) previewMutation.reset();
           }}
           preview={previewMutation.data ?? null}
           isLoading={previewMutation.isPending}
@@ -210,7 +215,7 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
           }}
           onCancel={() => {
             setPreviewOpen(false);
-            previewMutation.reset();
+            if (!previewMutation.isPending) previewMutation.reset();
           }}
           onRetry={() => previewMutation.mutate()}
         />
@@ -266,7 +271,9 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
                   migrateMutation.mutate(migrationId);
                 }}
               >
-                {t("integrations.migration.migrateToProduction")}
+                {previewHasDataLoss
+                  ? t("integrations.migration.migrateToProductionDestructive")
+                  : t("integrations.migration.migrateToProduction")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
