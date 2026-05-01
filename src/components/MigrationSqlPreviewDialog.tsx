@@ -130,6 +130,14 @@ export const MigrationSqlPreviewDialog = ({
 
         {!isLoading && !isError && hasStatements && (
           <>
+            <div
+              role="note"
+              className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3"
+            >
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>{t("integrations.migration.preview.reviewAdvisory")}</div>
+            </div>
+
             <div className="max-h-[50vh] overflow-auto rounded border border-l-4 border-l-green-500 bg-green-50 dark:bg-green-950 text-slate-900 dark:text-slate-50 font-mono text-xs">
               {statements.map((stmt, index) => {
                 const destructive = destructiveByIndex.get(index);
