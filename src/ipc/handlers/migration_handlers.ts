@@ -155,7 +155,7 @@ export function registerMigrationHandlers() {
     const stored = peekPreview(migrationId);
     if (!stored) {
       throw new DyadError(
-        "Migration plan expired or already applied. Click Migrate to Production again to compute a fresh plan.",
+        "Migration plan expired or already applied. Please start a new migration preview.",
         DyadErrorKind.Precondition,
       );
     }

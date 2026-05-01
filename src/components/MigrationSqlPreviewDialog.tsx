@@ -28,7 +28,6 @@ interface Props {
   isLoading: boolean;
   isError: boolean;
   errorMessage?: string;
-  sourceBranchName?: string;
   targetBranchName?: string;
   onApprove: () => void;
   onCancel: () => void;
@@ -83,8 +82,11 @@ export const MigrationSqlPreviewDialog = ({
 
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
           {isLoading && (
-            <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
-              <Loader2 className="w-6 h-6 animate-spin" />
+            <div
+              role="status"
+              className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground"
+            >
+              <Loader2 className="w-6 h-6 animate-spin" aria-hidden="true" />
               {t("integrations.migration.preview.loading")}
             </div>
           )}
@@ -161,11 +163,24 @@ export const MigrationSqlPreviewDialog = ({
                       key={index}
                       className={
                         destructive
-                          ? "border-l-4 border-red-500 bg-red-50/60 dark:bg-red-900/20 px-3 py-2 whitespace-pre-wrap text-red-900 dark:text-red-200"
-                          : "border-l-4 border-transparent px-3 py-2 whitespace-pre-wrap"
+                          ? "flex items-start gap-2 border-l-4 border-red-500 bg-red-50/60 dark:bg-red-900/20 px-3 py-2 whitespace-pre-wrap text-red-900 dark:text-red-200"
+                          : "flex items-start gap-2 border-l-4 border-transparent px-3 py-2 whitespace-pre-wrap"
                       }
                     >
-                      {stmt}
+                      {destructive ? (
+                        <AlertTriangle
+                          className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-600 dark:text-red-300"
+                          aria-label={t(
+                            "integrations.migration.preview.destructiveStatementLabel",
+                          )}
+                        />
+                      ) : (
+                        <span
+                          className="w-4 flex-shrink-0"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <span className="flex-1">{stmt}</span>
                     </div>
                   );
                 })}
@@ -205,7 +220,7 @@ export const MigrationSqlPreviewDialog = ({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onCancel}>
-            {hasStatements
+            {isLoading || hasStatements
               ? t("integrations.migration.preview.cancel")
               : t("integrations.migration.preview.close")}
           </Button>

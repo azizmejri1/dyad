@@ -207,7 +207,6 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
               ? getErrorMessage(previewMutation.error)
               : undefined
           }
-          sourceBranchName={sourceBranchName}
           targetBranchName={targetBranchName}
           onApprove={() => {
             setPreviewOpen(false);
