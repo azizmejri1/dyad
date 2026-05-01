@@ -65,7 +65,8 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
   });
 
   const migrateMutation = useMutation({
-    mutationFn: () => ipc.migration.migrate({ appId }),
+    mutationFn: (migrationId: string) =>
+      ipc.migration.migrate({ appId, migrationId }),
     onSuccess: invalidateDepsStatus,
     onError: invalidateDepsStatus,
   });
@@ -251,10 +252,18 @@ export const MigrationPanel = ({ appId }: MigrationPanelProps) => {
                     ? buttonVariants({ variant: "destructive" })
                     : undefined
                 }
+                disabled={!previewMutation.data?.migrationId}
                 onClick={() => {
+                  const migrationId = previewMutation.data?.migrationId;
                   setShowErrorDetails(false);
-                  migrateMutation.mutate();
                   setConfirmOpen(false);
+                  if (!migrationId) {
+                    // Lost the preview between approve and confirm — re-open
+                    // the preview dialog so the user can regenerate.
+                    setPreviewOpen(true);
+                    return;
+                  }
+                  migrateMutation.mutate(migrationId);
                 }}
               >
                 {t("integrations.migration.migrateToProduction")}

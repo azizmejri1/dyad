@@ -18,10 +18,13 @@ import {
   parseDrizzleMigrationFile,
   detectDestructiveStatements,
   deriveWarningsFromDestructive,
-  runDrizzleKitMigrate,
   invalidateProdIntrospectCache,
   cleanupWorkDir,
+  getProductionBranchId,
 } from "../utils/migration_utils";
+import { getAppWithNeonBranch } from "../utils/neon_utils";
+import { executeNeonStatementsInTransaction } from "../../neon_admin/neon_context";
+import { storePreview, consumePreview } from "../utils/migration_plan_store";
 
 // =============================================================================
 // Handler Registration
@@ -60,107 +63,123 @@ export function registerMigrationHandlers() {
   // 1. Resolve dev/prod branches, ensure deps, wipe+recreate work dir.
   // 2. Introspect prod (cached, 5 min TTL) → write a baseline snapshot.
   // 3. Introspect dev (always fresh) → run diff generate.
-  // 4. Read pending migration files; the baseline file is hidden from the UI
-  //    but kept on disk for the apply step's drizzle-kit migrate run.
+  // 4. Read pending migration files; the baseline file is hidden from the UI.
+  // 5. Stash the SQL statements in the in-memory plan store keyed by a fresh
+  //    migrationId; the work dir is then discarded — apply will execute
+  //    statements directly via Neon's HTTP transaction.
   // -------------------------------------------------------------------------
   createTypedHandler(migrationContracts.preview, async (_, params) => {
     const { appId } = params;
     logger.info(`Computing migration preview for app ${appId}`);
 
-    const ctx = await prepareMigrationContext({ appId, mode: "preview" });
+    const ctx = await prepareMigrationContext({ appId });
+    try {
+      const prodSchemaPath = await introspectProdWithCache({
+        appId,
+        prodBranchId: ctx.prodBranchId,
+        appPath: ctx.appPath,
+        workDir: ctx.workDir,
+        prodConnectionUri: ctx.prodUri,
+      });
 
-    const prodSchemaPath = await introspectProdWithCache({
-      appId,
-      prodBranchId: ctx.prodBranchId,
-      appPath: ctx.appPath,
-      workDir: ctx.workDir,
-      prodConnectionUri: ctx.prodUri,
-    });
+      await runBaselineGenerate({
+        workDir: ctx.workDir,
+        appPath: ctx.appPath,
+        prodSchemaPath,
+        prodConnectionUri: ctx.prodUri,
+      });
 
-    await runBaselineGenerate({
-      workDir: ctx.workDir,
-      appPath: ctx.appPath,
-      prodSchemaPath,
-      prodConnectionUri: ctx.prodUri,
-    });
+      const devSchemaPath = await introspectBranch({
+        appPath: ctx.appPath,
+        workDir: ctx.workDir,
+        subDir: "dev-schema-out",
+        connectionUri: ctx.devUri,
+      });
 
-    const devSchemaPath = await introspectBranch({
-      appPath: ctx.appPath,
-      workDir: ctx.workDir,
-      subDir: "dev-schema-out",
-      connectionUri: ctx.devUri,
-    });
+      await runDiffGenerate({
+        workDir: ctx.workDir,
+        appPath: ctx.appPath,
+        devSchemaPath,
+        devConnectionUri: ctx.devUri,
+      });
 
-    await runDiffGenerate({
-      workDir: ctx.workDir,
-      appPath: ctx.appPath,
-      devSchemaPath,
-      devConnectionUri: ctx.devUri,
-    });
+      const pending = await readPendingMigrationFiles(ctx.workDir);
+      const userVisible = pending.filter((p) => !p.isBaseline);
 
-    const pending = await readPendingMigrationFiles(ctx.workDir);
-    const userVisible = pending.filter((p) => !p.isBaseline);
+      const statements: string[] = [];
+      for (const entry of userVisible) {
+        statements.push(...parseDrizzleMigrationFile(entry.sql));
+      }
 
-    const statements: string[] = [];
-    for (const entry of userVisible) {
-      statements.push(...parseDrizzleMigrationFile(entry.sql));
+      const destructiveStatements = detectDestructiveStatements(statements);
+      const warnings = deriveWarningsFromDestructive(destructiveStatements);
+      const hasDataLoss = destructiveStatements.length > 0;
+
+      const migrationId = storePreview(appId, statements);
+
+      logger.info(
+        `Migration preview ${migrationId} for app ${appId}: ${statements.length} statements, ${destructiveStatements.length} destructive`,
+      );
+
+      return {
+        migrationId,
+        statements,
+        hasDataLoss,
+        warnings,
+        destructiveStatements,
+      };
+    } finally {
+      await cleanupWorkDir(ctx.workDir);
     }
-
-    const destructiveStatements = detectDestructiveStatements(statements);
-    const warnings = deriveWarningsFromDestructive(destructiveStatements);
-    const hasDataLoss = destructiveStatements.length > 0;
-
-    logger.info(
-      `Migration preview for app ${appId}: ${statements.length} statements, ${destructiveStatements.length} destructive`,
-    );
-
-    return {
-      statements,
-      hasDataLoss,
-      warnings,
-      destructiveStatements,
-    };
   });
 
   // -------------------------------------------------------------------------
   // migration:migrate
   //
-  // Consumes the work dir produced by the preceding preview call and runs
-  // `drizzle-kit migrate` against prod. Always invalidates the prod
-  // introspect cache afterwards (success or failure) and cleans the work
-  // dir. The user app's filesystem is not modified.
+  // Looks up the previously-previewed plan by migrationId and executes its
+  // statements directly against prod inside a single Neon HTTP transaction.
   // -------------------------------------------------------------------------
   createTypedHandler(migrationContracts.migrate, async (_, params) => {
-    const { appId } = params;
-    logger.info(`Applying migration for app ${appId}`);
+    const { appId, migrationId } = params;
+    logger.info(`Applying migration ${migrationId} for app ${appId}`);
 
-    const ctx = await prepareMigrationContext({ appId, mode: "migrate" });
+    const stored = consumePreview(migrationId);
+    if (!stored) {
+      throw new DyadError(
+        "Migration plan expired or already applied. Click Migrate to Production again to compute a fresh plan.",
+        DyadErrorKind.Precondition,
+      );
+    }
+    if (stored.appId !== appId) {
+      throw new DyadError(
+        "Migration plan does not belong to this app.",
+        DyadErrorKind.Precondition,
+      );
+    }
 
-    const pendingBefore = await readPendingMigrationFiles(ctx.workDir);
-    const hasDiff = pendingBefore.some((p) => !p.isBaseline);
+    if (stored.statements.length === 0) {
+      logger.info(
+        `Schemas already in sync for app ${appId}, nothing to migrate.`,
+      );
+      return { success: true, noChanges: true };
+    }
+
+    const { appData } = await getAppWithNeonBranch(appId);
+    const projectId = appData.neonProjectId!;
+    const { branchId: prodBranchId } = await getProductionBranchId(projectId);
 
     try {
-      const migrateResult = await runDrizzleKitMigrate({
-        workDir: ctx.workDir,
-        appPath: ctx.appPath,
-        prodConnectionUri: ctx.prodUri,
+      await executeNeonStatementsInTransaction({
+        projectId,
+        branchId: prodBranchId,
+        statements: stored.statements,
       });
-
-      const noChanges =
-        !hasDiff || /no\s+migrations\s+to\s+apply/i.test(migrateResult.stdout);
-
       logger.info(
-        noChanges
-          ? `Schemas already in sync for app ${appId}, nothing to migrate.`
-          : `Migration applied successfully for app ${appId}`,
+        `Migration ${migrationId} applied successfully for app ${appId}`,
       );
-      return { success: true, noChanges };
+      return { success: true };
     } finally {
-      invalidateProdIntrospectCache({
-        appId,
-        prodBranchId: ctx.prodBranchId,
-      });
-      await cleanupWorkDir(ctx.workDir);
+      invalidateProdIntrospectCache({ appId, prodBranchId });
     }
   });
 }

@@ -7,6 +7,7 @@ import { defineContract, createClient } from "../contracts/core";
 
 export const MigrationMigrateParamsSchema = z.object({
   appId: z.number(),
+  migrationId: z.string().uuid(),
 });
 
 export type MigrationMigrateParams = z.infer<
@@ -66,6 +67,7 @@ export type MigrationPreviewParams = z.infer<
 >;
 
 export const MigrationPreviewResponseSchema = z.object({
+  migrationId: z.string().uuid(),
   statements: z.array(z.string()),
   hasDataLoss: z.boolean(),
   warnings: z.array(z.string()),

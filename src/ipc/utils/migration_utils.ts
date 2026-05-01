@@ -37,9 +37,11 @@ const MIGRATION_DEPS = ["drizzle-kit", "drizzle-orm"] as const;
 
 export const BASELINE_NAME = "baseline";
 
-// Constant comment text. Same bytes every run → same sha256 → drizzle-kit
-// migrate sees the same hash in prod's __drizzle_migrations across runs and
-// skips re-applying. Do NOT include timestamps or app-specific content here.
+// No-op SQL body. The body produces zero statements when fed to
+// `parseDrizzleMigrationFile` (comment-only chunks are stripped), so the
+// baseline file never contributes to the apply plan. The exact constant also
+// gives `readPendingMigrationFiles` an unambiguous content-equality check to
+// recognize the baseline regardless of the random tag drizzle-kit chose for it.
 export const BASELINE_SQL_BODY =
   "-- Baseline: prod schema captured at bootstrap. Intentionally no-op; the snapshot\n" +
   "-- file is the authoritative anchor for diffing.\n";
@@ -584,14 +586,6 @@ async function mockDrizzleKitRun({
     };
   }
 
-  if (drizzleCommand === "migrate") {
-    return {
-      stdout: "Mock drizzle-kit migrate completed.\n",
-      stderr: "",
-      exitCode: 0,
-    };
-  }
-
   throw new Error(
     `Unsupported drizzle-kit command in test build: ${drizzleCommand}`,
   );
@@ -1026,9 +1020,10 @@ export async function runBaselineGenerate({
     return { baselineProduced: false };
   }
 
-  // Overwrite the baseline SQL with the constant no-op comment so the hash
-  // is stable across runs (prod's __drizzle_migrations sees the same hash
-  // for the baseline every time and skips it).
+  // Overwrite the baseline SQL with the constant no-op comment so it parses
+  // to zero statements in `parseDrizzleMigrationFile` and never contributes
+  // to the apply plan; the snapshot beside it is the real anchor for the
+  // next diff.
   const baselineSqlPath = path.join(drizzleDir, `${firstEntry.tag}.sql`);
   await fs.writeFile(baselineSqlPath, BASELINE_SQL_BODY, "utf-8");
 
@@ -1083,44 +1078,7 @@ export async function runDiffGenerate({
 }
 
 // =============================================================================
-// drizzle-kit migrate
-// =============================================================================
-
-export async function runDrizzleKitMigrate({
-  workDir,
-  appPath,
-  prodConnectionUri,
-}: {
-  workDir: string;
-  appPath: string;
-  prodConnectionUri: string;
-}): Promise<{ stdout: string; stderr: string }> {
-  const drizzleDir = path.join(workDir, "drizzle");
-  const configPath = await createDrizzleConfig({
-    workDir,
-    configName: "migrate.config.js",
-    outDir: drizzleDir,
-  });
-
-  const result = await spawnDrizzleKit({
-    args: ["migrate", `--config=${configPath}`],
-    cwd: workDir,
-    appPath,
-    connectionUri: prodConnectionUri,
-  });
-
-  if (result.exitCode !== 0) {
-    throw new DyadError(
-      `Migration apply failed: ${result.stderr || result.stdout}`,
-      DyadErrorKind.External,
-    );
-  }
-
-  return { stdout: result.stdout, stderr: result.stderr };
-}
-
-// =============================================================================
-// Migration context (shared setup for preview + migrate)
+// Migration context (shared setup for preview)
 // =============================================================================
 
 export interface MigrationContext {
@@ -1133,14 +1091,10 @@ export interface MigrationContext {
   workDir: string;
 }
 
-export type MigrationMode = "preview" | "migrate";
-
 export async function prepareMigrationContext({
   appId,
-  mode,
 }: {
   appId: number;
-  mode: MigrationMode;
 }): Promise<MigrationContext> {
   // 1. Resolve branches
   const { appData, branchId: devBranchId } = await getAppWithNeonBranch(appId);
@@ -1232,23 +1186,11 @@ export async function prepareMigrationContext({
     }
   }
 
-  // 5. Work directory
+  // 5. Work directory — preview always starts from a clean slate. The
+  // migrate handler does not call prepareMigrationContext; it consumes the
+  // SQL plan from the in-memory plan store instead.
   const workDir = getMigrationWorkDir(appId);
-  if (mode === "preview") {
-    await ensureFreshWorkDir(workDir);
-  } else {
-    // mode === "migrate" — work dir must already contain a journal from a
-    // prior preview. Defend against direct IPC use without a preview first.
-    const journalPath = path.join(workDir, "drizzle", "meta", "_journal.json");
-    try {
-      await fs.access(journalPath);
-    } catch {
-      throw new DyadError(
-        "Migration plan expired. Click preview again before applying.",
-        DyadErrorKind.Precondition,
-      );
-    }
-  }
+  await ensureFreshWorkDir(workDir);
 
   return {
     projectId,
