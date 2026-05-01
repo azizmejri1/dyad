@@ -154,7 +154,11 @@ export const MigrationSqlPreviewDialog = ({
                   "integrations.migration.preview.sqlStatementsRegionLabel",
                 )}
                 tabIndex={0}
-                className="rounded border border-l-4 border-l-green-500 bg-green-50 dark:bg-green-950 text-slate-900 dark:text-slate-50 font-mono text-xs"
+                className={
+                  hasDataLoss
+                    ? "rounded border border-l-4 border-l-red-500 bg-red-50 dark:bg-red-950 text-slate-900 dark:text-slate-50 font-mono text-xs"
+                    : "rounded border border-l-4 border-l-green-500 bg-green-50 dark:bg-green-950 text-slate-900 dark:text-slate-50 font-mono text-xs"
+                }
               >
                 {statements.map((stmt, index) => {
                   const destructive = destructiveByIndex.get(index);

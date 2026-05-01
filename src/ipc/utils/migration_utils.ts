@@ -718,12 +718,16 @@ export function deriveDestructiveReasons(
 // Migration file parsing
 // =============================================================================
 
-const STATEMENT_BREAKPOINT_RE = /^\s*-->\s*statement-breakpoint\s*$/m;
+const STATEMENT_BREAKPOINT_RE = /-->\s*statement-breakpoint\s*$/m;
 
 /**
  * Splits a drizzle-kit migration file's SQL on the `--> statement-breakpoint`
- * separator (anchored to its own line, so the marker text inside a SQL string
- * literal does not split mid-statement). Strips comment-only chunks.
+ * separator. The marker may sit on its own line OR follow a `;` on the same
+ * line (drizzle-kit emits the latter form, e.g. `DROP COLUMN "x";--> statement-breakpoint`).
+ * Anchoring to end-of-line keeps the marker inside a SQL string literal from
+ * splitting mid-statement, since the literal continues past the marker text
+ * with `'...);` and never reaches end-of-line at that position.
+ * Strips comment-only chunks.
  */
 export function parseDrizzleMigrationFile(sql: string): string[] {
   const cleaned = stripAnsi(sql);

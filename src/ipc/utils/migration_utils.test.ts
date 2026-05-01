@@ -55,8 +55,9 @@ describe("parseDrizzleMigrationFile", () => {
   });
 
   it("does not split on the marker text inside a SQL string literal", () => {
-    // Marker on its own line splits; same text mid-line (e.g. inside a quoted
-    // value) must NOT split. We anchor the regex to ^...$ with the m flag.
+    // Marker at end-of-line splits; same text mid-line (e.g. inside a quoted
+    // value) must NOT split. The regex anchors to $ with the m flag so the
+    // literal — which continues past the marker — never matches.
     const sql = [
       `INSERT INTO "logs" ("note") VALUES ('--> statement-breakpoint inline');`,
       "--> statement-breakpoint",
@@ -69,6 +70,22 @@ describe("parseDrizzleMigrationFile", () => {
     expect(statements[0]).toContain("INSERT INTO");
     expect(statements[0]).toContain("inline");
     expect(statements[1]).toBe('CREATE TABLE "x" ("id" serial);');
+  });
+
+  it("splits when the marker follows a semicolon on the same line", () => {
+    // drizzle-kit `generate` emits the marker directly after the closing `;`
+    // with no preceding newline. Without same-line support, the entire file
+    // collapses into a single statement and Neon HTTP rejects the multi-
+    // command prepared statement at apply time.
+    const sql =
+      'ALTER TABLE "todos" DROP COLUMN "column_1";--> statement-breakpoint\n' +
+      'ALTER TABLE "todos" DROP COLUMN "column_2";\n';
+
+    const statements = parseDrizzleMigrationFile(sql);
+
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toBe('ALTER TABLE "todos" DROP COLUMN "column_1";');
+    expect(statements[1]).toBe('ALTER TABLE "todos" DROP COLUMN "column_2";');
   });
 
   it("strips ANSI codes that may have leaked into the file", () => {
