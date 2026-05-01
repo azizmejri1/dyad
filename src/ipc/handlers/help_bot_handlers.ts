@@ -3,6 +3,7 @@ import { readSettings } from "../../main/settings";
 
 import log from "electron-log";
 import { safeSend } from "../utils/safe_sender";
+import { cancelOrphanedBaseStream } from "../utils/stream_text_utils";
 import {
   createOpenAI,
   openai,
@@ -92,9 +93,16 @@ export function registerHelpBotHandlers() {
         },
       });
 
+      // Read .fullStream now (not lazily) so the SDK's `teeStream()`
+      // runs synchronously, then cancel the orphaned tee branch before
+      // any chunks are pumped. See `cancelOrphanedBaseStream` for why
+      // this is required.
+      const fullStream = stream.fullStream;
+      cancelOrphanedBaseStream(stream);
+
       (async () => {
         try {
-          for await (const part of stream.fullStream) {
+          for await (const part of fullStream) {
             if (abortController.signal.aborted) break;
 
             if (part.type === "text-delta") {

@@ -67,6 +67,7 @@ import { requireMcpToolConsent } from "../utils/mcp_consent";
 import { handleLocalAgentStream } from "../../pro/main/ipc/handlers/local_agent/local_agent_handler";
 
 import { safeSend } from "../utils/safe_sender";
+import { cancelOrphanedBaseStream } from "../utils/stream_text_utils";
 import { cleanFullResponse } from "../utils/cleanFullResponse";
 import { generateProblemReport } from "../processors/tsc";
 import { createProblemFixPrompt } from "@/shared/problem_prompt";
@@ -1181,8 +1182,14 @@ This conversation includes one or more image attachments. When the user uploads 
             },
             abortSignal: abortController.signal,
           });
+          // Read .fullStream now (not lazily) so the SDK's `teeStream()`
+          // runs synchronously, then cancel the orphaned tee branch
+          // before any chunks are pumped. See `cancelOrphanedBaseStream`
+          // for the underlying SDK behavior and why this is required.
+          const fullStream = streamResult.fullStream;
+          cancelOrphanedBaseStream(streamResult);
           return {
-            fullStream: streamResult.fullStream,
+            fullStream,
             usage: streamResult.usage,
           };
         };

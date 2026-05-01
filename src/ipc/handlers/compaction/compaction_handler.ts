@@ -17,6 +17,7 @@ import {
   shouldTriggerCompaction,
 } from "@/ipc/utils/token_utils";
 import { safeSend } from "@/ipc/utils/safe_sender";
+import { cancelOrphanedBaseStream } from "@/ipc/utils/stream_text_utils";
 import { COMPACTION_SYSTEM_PROMPT } from "@/prompts/compaction_system_prompt";
 import {
   storePreCompactionMessages,
@@ -198,9 +199,15 @@ export async function performCompaction(
       maxRetries: 2,
     });
 
+    // Read .textStream now (not lazily) so the SDK's tee runs
+    // synchronously, then cancel the orphaned branch before any chunks
+    // are pumped. See `cancelOrphanedBaseStream` for why this is required.
+    const textStream = summaryResult.textStream;
+    cancelOrphanedBaseStream(summaryResult);
+
     // Stream summary text to the frontend as it generates
     let summary = "";
-    for await (const chunk of summaryResult.textStream) {
+    for await (const chunk of textStream) {
       summary += chunk;
       onSummaryChunk?.(summary);
     }

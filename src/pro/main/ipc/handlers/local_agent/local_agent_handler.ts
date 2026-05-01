@@ -28,6 +28,7 @@ import { getDyadAppPath } from "@/paths/paths";
 import { detectFrameworkType } from "@/ipc/utils/framework_utils";
 import { getModelClient } from "@/ipc/utils/get_model_client";
 import { safeSend } from "@/ipc/utils/safe_sender";
+import { cancelOrphanedBaseStream } from "@/ipc/utils/stream_text_utils";
 import { getMaxTokens, getTemperature } from "@/ipc/utils/token_utils";
 import {
   getProviderOptions,
@@ -982,11 +983,18 @@ export async function handleLocalAgentStream(
             },
           });
 
+          // Read .fullStream now (not lazily) so the SDK's `teeStream()`
+          // runs synchronously, then cancel the orphaned tee branch
+          // before any chunks are pumped. See `cancelOrphanedBaseStream`
+          // for the underlying SDK behavior and why this is required.
+          const fullStream = streamResult.fullStream;
+          cancelOrphanedBaseStream(streamResult);
+
           let inThinkingBlock = false;
           let streamErrorFromIteration: unknown;
 
           try {
-            for await (const part of streamResult.fullStream) {
+            for await (const part of fullStream) {
               if (abortController.signal.aborted) {
                 logger.log(`Stream aborted for chat ${req.chatId}`);
                 // Clean up pending consent/questionnaire requests to prevent stale UI banners

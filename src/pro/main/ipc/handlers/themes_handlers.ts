@@ -12,6 +12,7 @@ import { streamText, TextPart, ImagePart } from "ai";
 import { readSettings } from "../../../../main/settings";
 import { IS_TEST_BUILD } from "@/ipc/utils/test_utils";
 import { getModelClient } from "../../../../ipc/utils/get_model_client";
+import { cancelOrphanedBaseStream } from "../../../../ipc/utils/stream_text_utils";
 import { v4 as uuidv4 } from "uuid";
 import type {
   SetAppThemeParams,
@@ -722,7 +723,15 @@ images: ${imagesPart}`;
           messages: [{ role: "user", content: contentParts }],
         });
 
-        const result = await stream.text;
+        // Read .textStream now (not lazily) so the SDK's tee runs
+        // synchronously, then cancel the orphaned branch before any
+        // chunks are pumped. `await stream.text` would internally
+        // consume `.fullStream` and leave the orphan queueing the
+        // whole response.
+        const textStream = stream.textStream;
+        cancelOrphanedBaseStream(stream);
+        let result = "";
+        for await (const chunk of textStream) result += chunk;
 
         return { prompt: result };
       } catch (error) {
@@ -953,7 +962,15 @@ source: Live website (screenshot and content provided)`;
           messages: [{ role: "user", content: contentParts }],
         });
 
-        const result = await stream.text;
+        // Read .textStream now (not lazily) so the SDK's tee runs
+        // synchronously, then cancel the orphaned branch before any
+        // chunks are pumped. `await stream.text` would internally
+        // consume `.fullStream` and leave the orphan queueing the
+        // whole response.
+        const textStream = stream.textStream;
+        cancelOrphanedBaseStream(stream);
+        let result = "";
+        for await (const chunk of textStream) result += chunk;
 
         return { prompt: result };
       } catch (error) {
