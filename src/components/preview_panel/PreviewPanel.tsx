@@ -8,6 +8,7 @@ import {
 
 import { CodeView } from "./CodeView";
 import { PreviewIframe } from "./PreviewIframe";
+import { PreviewToolbar } from "./PreviewToolbar";
 import { Problems } from "./Problems";
 import { ConfigurePanel } from "./ConfigurePanel";
 import { ChevronDown, ChevronUp, Logs } from "lucide-react";
@@ -59,12 +60,23 @@ const ConsoleHeader = ({
 
 // Main PreviewPanel component
 export function PreviewPanel() {
+  const { t } = useTranslation("home");
   const [previewMode] = useAtom(previewModeAtom);
   const selectedAppId = useAtomValue(selectedAppIdAtom);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const { runApp, loading, app } = useRunApp();
   const key = useAtomValue(previewPanelKeyAtom);
   const consoleEntries = useAtomValue(appConsoleEntriesAtom);
+
+  const sectionLabelMap: Record<string, string> = {
+    code: t("preview.code"),
+    problems: t("preview.problems"),
+    configure: t("preview.configure"),
+    security: t("preview.security"),
+    publish: t("preview.publish"),
+    plan: "Plan",
+  };
+  const sectionLabel = sectionLabelMap[previewMode];
 
   const latestMessage =
     consoleEntries.length > 0
@@ -131,22 +143,31 @@ export function PreviewPanel() {
       <div className="flex-1 overflow-hidden">
         <PanelGroup direction="vertical">
           <Panel id="content" minSize={30}>
-            <div className="h-full overflow-y-auto">
-              {previewMode === "preview" ? (
-                <PreviewIframe key={key} loading={loading} />
-              ) : previewMode === "code" ? (
-                <CodeView loading={loading} app={app} />
-              ) : previewMode === "configure" ? (
-                <ConfigurePanel />
-              ) : previewMode === "publish" ? (
-                <PublishPanel />
-              ) : previewMode === "security" ? (
-                <SecurityPanel />
-              ) : previewMode === "plan" ? (
-                <PlanPanel />
-              ) : (
-                <Problems />
+            <div className="flex h-full flex-col">
+              {previewMode !== "preview" && (
+                <PreviewToolbar>
+                  <div className="mx-auto w-1/2 min-w-20 flex items-center justify-center bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-full px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-200">
+                    {sectionLabel}
+                  </div>
+                </PreviewToolbar>
               )}
+              <div className="flex-1 overflow-y-auto">
+                {previewMode === "preview" ? (
+                  <PreviewIframe key={key} loading={loading} />
+                ) : previewMode === "code" ? (
+                  <CodeView loading={loading} app={app} />
+                ) : previewMode === "configure" ? (
+                  <ConfigurePanel />
+                ) : previewMode === "publish" ? (
+                  <PublishPanel />
+                ) : previewMode === "security" ? (
+                  <SecurityPanel />
+                ) : previewMode === "plan" ? (
+                  <PlanPanel />
+                ) : (
+                  <Problems />
+                )}
+              </div>
             </div>
           </Panel>
           {isConsoleOpen && (
