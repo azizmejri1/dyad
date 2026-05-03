@@ -102,9 +102,9 @@ const PreviewToolbarModeButtons = ({ isCompact }: ModeButtonsProps) => {
       testId: "publish-mode-button",
     },
     plan: {
-      icon: null,
-      label: "",
-      testId: "",
+      icon: <Eye size={16} />,
+      label: t("preview.plan"),
+      testId: "plan-mode-button",
     },
   };
 
@@ -123,6 +123,7 @@ const PreviewToolbarModeButtons = ({ isCompact }: ModeButtonsProps) => {
           render={
             <button
               data-testid={meta.testId}
+              aria-pressed={isActive}
               className={cn(
                 "no-app-region-drag cursor-pointer relative flex items-center justify-center p-1.5 rounded-md transition-colors",
                 isActive

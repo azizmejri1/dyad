@@ -197,6 +197,7 @@
     "configure": "配置",
     "security": "安全",
     "publish": "发布",
+    "plan": "计划",
     "moreOptions": "更多选项",
     "rebuild": "重新构建",
     "rebuildDescription": "重新安装 node_modules 并重启",

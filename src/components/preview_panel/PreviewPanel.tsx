@@ -74,7 +74,7 @@ export function PreviewPanel() {
     configure: t("preview.configure"),
     security: t("preview.security"),
     publish: t("preview.publish"),
-    plan: "Plan",
+    plan: t("preview.plan"),
   };
   const sectionLabel = sectionLabelMap[previewMode];
 

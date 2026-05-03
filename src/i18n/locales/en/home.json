@@ -200,6 +200,7 @@
     "configure": "Configure",
     "security": "Security",
     "publish": "Publish",
+    "plan": "Plan",
     "moreOptions": "More options",
     "rebuild": "Rebuild",
     "rebuildDescription": "Re-installs node_modules and restarts",
