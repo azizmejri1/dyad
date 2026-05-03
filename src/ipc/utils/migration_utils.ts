@@ -663,6 +663,37 @@ function shouldTerminateOnPromptOnly(cumulativeStdout: string): boolean {
   return PROMPT_MARKER_RE.test(stripAnsi(cumulativeStdout));
 }
 
+// Patterns that, if present in drizzle-kit's stderr, indicate the command
+// failed even when the process never emitted a clean non-zero exit. The
+// idle-settlement path resolves with `exitCode: null` whenever something
+// keeps the Node utility process alive past drizzle-kit's own work — e.g.
+// esbuild's service subprocess after a transform error, or a websocket
+// connection from @neondatabase/serverless. In those cases the existing
+// "exit + non-zero code" gate is skipped, so we'd otherwise treat a hard
+// failure as a successful no-op generate and tell the user the schemas are
+// already in sync. Scanning stderr for these markers turns any such failure
+// into a DyadError regardless of how the spawn settled.
+const DRIZZLE_KIT_STDERR_FAILURE_PATTERNS: RegExp[] = [
+  // Matches `Error:` and any subclass like `TypeError:`, `ReferenceError:`,
+  // `SyntaxError:` — drizzle-kit re-throws Node runtime errors verbatim when
+  // the introspected schema.ts references an unmapped type (the user's
+  // column produces e.g. `unknown is not defined`).
+  /^\w*Error:/m,
+  /Transform failed/,
+  /at failureErrorWithLog/,
+];
+
+export function detectDrizzleKitFailureInStderr(stderr: string): string | null {
+  const trimmed = stderr.trim();
+  if (trimmed.length === 0) return null;
+  for (const pattern of DRIZZLE_KIT_STDERR_FAILURE_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
 const DESTRUCTIVE_PATTERNS: Array<{
   regex: RegExp;
   reason: DestructiveStatementReason;
@@ -995,17 +1026,21 @@ export async function introspectProdWithCache({
  * Verifies the on-disk artifacts produced by `drizzle-kit generate` are
  * complete: every journal entry must reference an existing SQL file and
  * matching snapshot. We can settle the spawn early on idle (drizzle-kit's
- * neon driver leaves a websocket open that prevents a clean process exit),
- * so we need a separate signal that the work actually finished. A complete
- * journal whose referenced files all exist means drizzle-kit got past the
- * write phase before we killed it; a missing file means we settled too
- * early and the plan would be partial / incorrect.
+ * neon driver / esbuild service can leave handles open that prevent a clean
+ * process exit), so we need a separate signal that the work actually
+ * finished. A complete journal whose referenced files all exist means
+ * drizzle-kit got past the write phase before we killed it; a missing file
+ * means we settled too early and the plan would be partial / incorrect.
  *
  * Returns the number of complete entries (0 means drizzle-kit reported "no
  * schema changes" and never wrote a journal).
  */
-async function assertGenerateArtifactsComplete(
+export async function assertGenerateArtifactsComplete(
   drizzleDir: string,
+  spawnResult: Pick<
+    SpawnDrizzleKitWithEarlyTerminationResult,
+    "terminatedReason" | "stderr"
+  >,
 ): Promise<number> {
   const journalPath = path.join(drizzleDir, "meta", "_journal.json");
   let entries: Array<{ idx: number; tag: string }>;
@@ -1015,8 +1050,23 @@ async function assertGenerateArtifactsComplete(
     };
     entries = journal.entries ?? [];
   } catch {
-    // No journal at all — drizzle-kit reported no schema changes. Nothing to
-    // validate. Callers treat this as a no-op generate.
+    // No journal at all. The benign reading is "drizzle-kit reported no
+    // schema changes and never wrote one." But if we settled via `idle` AND
+    // stderr is non-empty, that combination is suspicious by definition:
+    // on a successful generate, drizzle-kit writes the journal before going
+    // quiet. An idle settle with no journal AND output on stderr almost
+    // certainly means the command failed before completing — Treat it as a
+    // hard failure so we don't tell the user "already in sync" when the
+    // diff never actually ran.
+    if (
+      spawnResult.terminatedReason === "idle" &&
+      spawnResult.stderr.trim().length > 0
+    ) {
+      throw new DyadError(
+        `drizzle-kit generate produced no journal but emitted stderr before going idle; the command likely failed before writing artifacts: ${spawnResult.stderr.trim()}`,
+        DyadErrorKind.External,
+      );
+    }
     return 0;
   }
 
@@ -1106,12 +1156,27 @@ export async function runBaselineGenerate({
     );
   }
 
+  // Stderr-pattern check runs regardless of how the spawn settled. The
+  // exit-code gate above only fires for clean non-zero exits, but a hung
+  // child that we kill via idle/timeout resolves with `exitCode: null` —
+  // any failure printed to stderr would otherwise be silently dropped.
+  const baselineStderrFailure = detectDrizzleKitFailureInStderr(result.stderr);
+  if (baselineStderrFailure) {
+    throw new DyadError(
+      `drizzle-kit baseline generation reported an error on stderr: ${baselineStderrFailure}`,
+      DyadErrorKind.External,
+    );
+  }
+
   // Verify drizzle-kit finished writing its artifacts before we settled.
-  // Idle-termination is a best-effort signal (the neon driver keeps the
-  // websocket open after work completes), so a journal with missing SQL or
-  // snapshot files means we killed the process mid-write and the plan would
-  // be partial.
-  const completeEntryCount = await assertGenerateArtifactsComplete(drizzleDir);
+  // Idle-termination is a best-effort signal (the neon driver / esbuild
+  // service can keep handles open after work completes), so a journal with
+  // missing SQL or snapshot files means we killed the process mid-write and
+  // the plan would be partial.
+  const completeEntryCount = await assertGenerateArtifactsComplete(
+    drizzleDir,
+    result,
+  );
   if (completeEntryCount === 0) {
     // No journal — drizzle-kit said "no schema changes" (empty prod). No
     // baseline file to neutralize; the next diff-generate will start fresh.
@@ -1196,10 +1261,25 @@ export async function runDiffGenerate({
     );
   }
 
+  // Catch failures the exit-code gate misses: when something keeps the
+  // process alive past drizzle-kit's own work (esbuild's service after a
+  // Transform error, neon driver websocket, etc.) the spawn settles via
+  // idle with `exitCode: null`. Without this scan, an esbuild Transform
+  // error on the introspected dev schema flows through as a clean run with
+  // an empty journal — and the user is told their schemas are already in
+  // sync even though the diff never executed.
+  const diffStderrFailure = detectDrizzleKitFailureInStderr(result.stderr);
+  if (diffStderrFailure) {
+    throw new DyadError(
+      `drizzle-kit migration plan generation reported an error on stderr: ${diffStderrFailure}`,
+      DyadErrorKind.External,
+    );
+  }
+
   // Same idle-termination guard as the baseline run: verify every journal
   // entry has its SQL + snapshot on disk before letting the caller read the
   // pending migrations.
-  await assertGenerateArtifactsComplete(drizzleDir);
+  await assertGenerateArtifactsComplete(drizzleDir, result);
 }
 
 // =============================================================================
