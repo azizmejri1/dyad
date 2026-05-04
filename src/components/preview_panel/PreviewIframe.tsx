@@ -1465,22 +1465,38 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
               </Tooltip>
             )}
             <div className="flex items-center bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-full p-0.5">
-              <button
-                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-                disabled={!canGoBack || loading || !selectedAppId}
-                onClick={handleNavigateBack}
-                data-testid="preview-navigate-back-button"
-              >
-                <ArrowLeft size={16} />
-              </button>
-              <button
-                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-                disabled={!canGoForward || loading || !selectedAppId}
-                onClick={handleNavigateForward}
-                data-testid="preview-navigate-forward-button"
-              >
-                <ArrowRight size={16} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+                      disabled={!canGoBack || loading || !selectedAppId}
+                      onClick={handleNavigateBack}
+                      data-testid="preview-navigate-back-button"
+                      aria-label="Navigate back"
+                    />
+                  }
+                >
+                  <ArrowLeft size={16} />
+                </TooltipTrigger>
+                <TooltipContent>Navigate back</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+                      disabled={!canGoForward || loading || !selectedAppId}
+                      onClick={handleNavigateForward}
+                      data-testid="preview-navigate-forward-button"
+                      aria-label="Navigate forward"
+                    />
+                  }
+                >
+                  <ArrowRight size={16} />
+                </TooltipTrigger>
+                <TooltipContent>Navigate forward</TooltipContent>
+              </Tooltip>
             </div>
           </div>
 
@@ -1621,42 +1637,59 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-            <button
-              onClick={handleReload}
-              className="flex-shrink-0 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-              disabled={loading || !selectedAppId}
-              data-testid="preview-refresh-button"
-            >
-              <RefreshCw size={14} />
-            </button>
-            <button
-              data-testid="preview-open-browser-button"
-              onClick={async () => {
-                try {
-                  const url = await resolvePreviewBrowserUrl({
-                    isCloudMode,
-                    selectedAppId,
-                    originalUrl,
-                    createCloudSandboxShareLink,
-                  });
-                  await ipc.system.openExternalUrl(url);
-                } catch (error) {
-                  showError(
-                    error instanceof Error
-                      ? error.message
-                      : "Failed to open cloud sandbox share link.",
-                  );
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={handleReload}
+                    className="flex-shrink-0 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+                    disabled={loading || !selectedAppId}
+                    data-testid="preview-refresh-button"
+                    aria-label="Refresh preview"
+                  />
                 }
-              }}
-              disabled={
-                isCloudMode
-                  ? selectedAppId === null || isCreatingCloudSandboxShareLink
-                  : !originalUrl
-              }
-              className="flex-shrink-0 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-            >
-              <ExternalLink size={14} />
-            </button>
+              >
+                <RefreshCw size={14} />
+              </TooltipTrigger>
+              <TooltipContent>Refresh preview</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    data-testid="preview-open-browser-button"
+                    aria-label="Open in browser"
+                    onClick={async () => {
+                      try {
+                        const url = await resolvePreviewBrowserUrl({
+                          isCloudMode,
+                          selectedAppId,
+                          originalUrl,
+                          createCloudSandboxShareLink,
+                        });
+                        await ipc.system.openExternalUrl(url);
+                      } catch (error) {
+                        showError(
+                          error instanceof Error
+                            ? error.message
+                            : "Failed to open cloud sandbox share link.",
+                        );
+                      }
+                    }}
+                    disabled={
+                      isCloudMode
+                        ? selectedAppId === null ||
+                          isCreatingCloudSandboxShareLink
+                        : !originalUrl
+                    }
+                    className="flex-shrink-0 p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+                  />
+                }
+              >
+                <ExternalLink size={14} />
+              </TooltipTrigger>
+              <TooltipContent>Open in browser</TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Right action group - editing tools, panel toggle, restart */}

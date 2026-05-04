@@ -123,6 +123,7 @@ const PreviewToolbarModeButtons = ({ isCompact }: ModeButtonsProps) => {
           render={
             <button
               data-testid={meta.testId}
+              aria-label={meta.label}
               aria-pressed={isActive}
               className={cn(
                 "no-app-region-drag cursor-pointer relative flex items-center justify-center p-1.5 rounded-md transition-colors",
@@ -158,6 +159,7 @@ const PreviewToolbarModeButtons = ({ isCompact }: ModeButtonsProps) => {
               render={
                 <DropdownMenuTrigger
                   data-testid="preview-mode-overflow-button"
+                  aria-label={t("preview.moreOptions")}
                   className={cn(
                     "no-app-region-drag cursor-pointer relative flex items-center justify-center p-1.5 rounded-md transition-colors",
                     isOverflowActive

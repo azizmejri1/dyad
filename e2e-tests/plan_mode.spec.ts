@@ -26,10 +26,11 @@ testSkipIfWindows(
     const acceptButton = po.page.getByRole("button", { name: "Accept Plan" });
     await expect(acceptButton).toBeVisible({ timeout: Timeout.MEDIUM });
 
-    // Accept the plan. We dispatch the click event directly because a sonner
-    // info toast at the bottom-right ("We've switched you to a new chat") can
-    // overlap the Accept Plan button at the bottom of the plan panel.
-    await acceptButton.dispatchEvent("click");
+    // The "We've switched you to a new chat" sonner toast at the bottom-right
+    // can overlap the Accept Plan button. Dismiss it so a normal click works
+    // and Playwright's actionability checks are honored.
+    await po.toastNotifications.dismissAllToasts();
+    await acceptButton.click();
 
     // Wait for navigation to a different chat
     await expect(async () => {
