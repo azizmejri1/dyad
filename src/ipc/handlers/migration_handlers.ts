@@ -187,13 +187,11 @@ export function registerMigrationHandlers() {
     // Reject the apply if the production target drifted between preview and
     // confirm: a different Neon project, a different default branch, or a
     // newer `updated_at` on that branch all mean the SQL the user reviewed
-    // may not match what would run now. Tests use a mock that always
-    // generates a fresh `updated_at`, so skip the timestamp check there.
+    // may not match what would run now.
     const target = stored.target;
     const projectChanged = target.projectId !== projectId;
     const branchChanged = target.prodBranchId !== prodBranchId;
-    const branchAdvanced =
-      !IS_TEST_BUILD && target.prodUpdatedAt !== prodUpdatedAt;
+    const branchAdvanced = target.prodUpdatedAt !== prodUpdatedAt;
     if (projectChanged || branchChanged || branchAdvanced) {
       logger.warn(
         `Migration ${migrationId} for app ${appId} rejected: production target changed since preview (` +
