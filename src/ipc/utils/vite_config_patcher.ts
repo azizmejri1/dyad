@@ -3,6 +3,8 @@ import path from "node:path";
 import * as recast from "recast";
 import * as tsParser from "recast/parsers/babel-ts";
 
+import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
+
 const b = recast.types.builders;
 const n = recast.types.namedTypes;
 
@@ -22,9 +24,9 @@ export interface ViteConfigBackup {
   wasPatched: boolean;
 }
 
-export class ViteConfigPatchError extends Error {
+export class ViteConfigPatchError extends DyadError {
   constructor(message: string) {
-    super(message);
+    super(message, DyadErrorKind.Precondition);
     this.name = "ViteConfigPatchError";
   }
 }
@@ -112,31 +114,49 @@ function pluginsArrayContainsNitroCall(pluginsArr: any): boolean {
   return false;
 }
 
-function hasNitroImport(ast: any): boolean {
-  let found = false;
-  recast.types.visit(ast, {
-    visitImportDeclaration(p) {
-      const node = p.node;
-      if (
-        n.StringLiteral.check(node.source) &&
-        node.source.value === NITRO_IMPORT_SOURCE
-      ) {
-        for (const spec of node.specifiers ?? []) {
-          if (
-            n.ImportSpecifier.check(spec) &&
-            n.Identifier.check(spec.imported) &&
-            spec.imported.name === NITRO_LOCAL_NAME
-          ) {
-            found = true;
-            return false;
-          }
+type NitroBindingState =
+  | { kind: "fromNitroVite" }
+  | { kind: "conflict"; source: string }
+  | { kind: "none" };
+
+function getNitroBindingState(ast: any): NitroBindingState {
+  const program = ast.program;
+  if (!program || !Array.isArray(program.body)) return { kind: "none" };
+
+  let conflict: { source: string } | null = null;
+  for (const stmt of program.body) {
+    if (n.ImportDeclaration.check(stmt)) {
+      const sourceValue = n.StringLiteral.check(stmt.source)
+        ? stmt.source.value
+        : "";
+      for (const spec of stmt.specifiers ?? []) {
+        const localName = (spec as any).local?.name;
+        if (localName !== NITRO_LOCAL_NAME) continue;
+        if (sourceValue === NITRO_IMPORT_SOURCE) {
+          return { kind: "fromNitroVite" };
+        }
+        conflict ??= { source: `import from "${sourceValue}"` };
+      }
+    } else if (n.VariableDeclaration.check(stmt)) {
+      for (const decl of stmt.declarations) {
+        if (
+          n.VariableDeclarator.check(decl) &&
+          n.Identifier.check(decl.id) &&
+          decl.id.name === NITRO_LOCAL_NAME
+        ) {
+          conflict ??= { source: "local variable declaration" };
         }
       }
-      this.traverse(p);
-      return undefined;
-    },
-  });
-  return found;
+    } else if (
+      n.FunctionDeclaration.check(stmt) &&
+      stmt.id?.name === NITRO_LOCAL_NAME
+    ) {
+      conflict ??= { source: "function declaration" };
+    }
+  }
+  return conflict
+    ? { kind: "conflict", source: conflict.source }
+    : { kind: "none" };
 }
 
 function insertNitroImport(ast: any): void {
@@ -194,11 +214,21 @@ export async function addNitroToViteConfig(
     );
   }
 
-  if (pluginsArrayContainsNitroCall(pluginsArr) && hasNitroImport(ast)) {
+  const bindingState = getNitroBindingState(ast);
+  if (bindingState.kind === "conflict") {
+    throw new ViteConfigPatchError(
+      `\`${NITRO_LOCAL_NAME}\` is already bound by ${bindingState.source} in ${path.basename(filePath)}; cannot safely add the Nitro plugin.`,
+    );
+  }
+
+  if (
+    bindingState.kind === "fromNitroVite" &&
+    pluginsArrayContainsNitroCall(pluginsArr)
+  ) {
     return { filePath, backup: original, wasPatched: false };
   }
 
-  if (!hasNitroImport(ast)) {
+  if (bindingState.kind === "none") {
     insertNitroImport(ast);
   }
 

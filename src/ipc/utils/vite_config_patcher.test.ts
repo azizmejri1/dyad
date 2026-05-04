@@ -251,6 +251,24 @@ export default defineConfig({ plugins: [] });
     expect(await readConfig("vite.config.ts")).toBe(original);
   });
 
+  it("throws ViteConfigPatchError when `nitro` is already bound from a different source", async () => {
+    const original = `import { defineConfig } from "vite";
+import { nitro } from "some-other-package";
+import react from "@vitejs/plugin-react-swc";
+
+export default defineConfig(() => ({
+  plugins: [react(), nitro()],
+}));
+`;
+    await writeConfig("vite.config.ts", original);
+
+    await expect(addNitroToViteConfig(appPath)).rejects.toBeInstanceOf(
+      ViteConfigPatchError,
+    );
+
+    expect(await readConfig("vite.config.ts")).toBe(original);
+  });
+
   it("adds only the nitro import if plugins already contains nitro()", async () => {
     const original = `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
