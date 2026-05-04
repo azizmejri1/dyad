@@ -75,7 +75,41 @@ export class PreviewPanel {
       | "security"
       | "publish",
   ) {
-    await this.page.getByTestId(`${mode}-mode-button`).click();
+    // Mode buttons live inside the preview panel, so the panel must be expanded
+    // before they're clickable. If the panel is collapsed, the chat panel covers
+    // the toolbar and intercepts pointer events.
+    const previewPanel = this.page.locator("#preview-panel");
+    const sizeAttr = await previewPanel.getAttribute("data-panel-size");
+    if (sizeAttr === null || parseFloat(sizeAttr) < 5) {
+      await this.page.getByTestId("toggle-preview-panel-button").click();
+      // Wait for panel-resize transition (chat.tsx uses 100ms transition)
+      await previewPanel.evaluate(
+        (el) =>
+          new Promise<void>((resolve) => {
+            const check = () => {
+              const v = el.getAttribute("data-panel-size");
+              if (v && parseFloat(v) >= 5) resolve();
+              else requestAnimationFrame(check);
+            };
+            check();
+          }),
+      );
+    }
+
+    // When the toolbar is narrow (< 700px), `security` and `publish` move into
+    // an overflow dropdown. Open the dropdown first if the direct button isn't
+    // visible.
+    const directButton = this.page.getByTestId(`${mode}-mode-button`);
+    const isInOverflow =
+      (mode === "security" || mode === "publish") &&
+      (await directButton
+        .first()
+        .isVisible()
+        .catch(() => false)) === false;
+    if (isInOverflow) {
+      await this.page.getByTestId("preview-mode-overflow-button").click();
+    }
+    await directButton.click();
   }
 
   async clickRecheckProblems() {
