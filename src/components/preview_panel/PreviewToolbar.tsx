@@ -59,10 +59,8 @@ const PreviewToolbarModeButtons = ({ isCompact }: ModeButtonsProps) => {
         : problemCount.toString();
 
   const selectPanel = (panel: PreviewMode) => {
-    if (previewMode === panel) {
-      setIsPreviewOpen(!isPreviewOpen);
-    } else {
-      setPreviewMode(panel);
+    setPreviewMode(panel);
+    if (!isPreviewOpen) {
       setIsPreviewOpen(true);
     }
   };

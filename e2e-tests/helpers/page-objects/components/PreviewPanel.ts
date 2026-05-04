@@ -83,16 +83,14 @@ export class PreviewPanel {
     if (sizeAttr === null || parseFloat(sizeAttr) < 5) {
       await this.page.getByTestId("toggle-preview-panel-button").click();
       // Wait for panel-resize transition (chat.tsx uses 100ms transition)
-      await previewPanel.evaluate(
-        (el) =>
-          new Promise<void>((resolve) => {
-            const check = () => {
-              const v = el.getAttribute("data-panel-size");
-              if (v && parseFloat(v) >= 5) resolve();
-              else requestAnimationFrame(check);
-            };
-            check();
-          }),
+      await this.page.waitForFunction(
+        () => {
+          const el = document.querySelector("#preview-panel");
+          const v = el?.getAttribute("data-panel-size");
+          return v !== null && v !== undefined && parseFloat(v) >= 5;
+        },
+        undefined,
+        { timeout: Timeout.MEDIUM },
       );
     }
 

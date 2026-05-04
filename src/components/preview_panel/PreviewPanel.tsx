@@ -4,6 +4,7 @@ import {
   previewModeAtom,
   previewPanelKeyAtom,
   selectedAppIdAtom,
+  type PreviewMode,
 } from "../../atoms/appAtoms";
 
 import { CodeView } from "./CodeView";
@@ -68,7 +69,7 @@ export function PreviewPanel() {
   const key = useAtomValue(previewPanelKeyAtom);
   const consoleEntries = useAtomValue(appConsoleEntriesAtom);
 
-  const sectionLabelMap: Record<string, string> = {
+  const sectionLabelMap: Partial<Record<PreviewMode, string>> = {
     code: t("preview.code"),
     problems: t("preview.problems"),
     configure: t("preview.configure"),
