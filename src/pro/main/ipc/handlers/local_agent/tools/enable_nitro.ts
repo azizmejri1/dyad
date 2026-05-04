@@ -9,6 +9,11 @@ import {
   ExecuteAddDependencyError,
 } from "@/ipc/processors/executeAddDependency";
 import { appendNitroRules, restoreAiRules } from "@/ipc/utils/ai_rules_patcher";
+import {
+  addNitroToViteConfig,
+  restoreViteConfig,
+  ViteConfigBackup,
+} from "@/ipc/utils/vite_config_patcher";
 
 const logger = log.scope("enable_nitro");
 
@@ -50,10 +55,6 @@ or any server-only env var, or when the user asks for an API route, webhook, or
 server-side compute. Skip for client-side fetch with public/anon keys, for use
 cases fully covered by Supabase (anon key + RLS), or when the user explicitly
 says "static only" / "no backend".
-
-After this tool returns, follow the "Nitro Server Layer" section appended to
-AI_RULES.md — it covers the required vite.config.ts changes and the conventions
-for routes under server/routes/api/.
 `.trim();
 
 export const enableNitroTool: ToolDefinition<
@@ -84,6 +85,7 @@ export const enableNitroTool: ToolDefinition<
     let nitroConfigResult: { filePath: string; wasCreated: boolean } | null =
       null;
     let serverDirCreated = false;
+    let viteConfigBackup: ViteConfigBackup | null = null;
     const serverDirPath = path.join(ctx.appPath, "server");
 
     try {
@@ -104,6 +106,8 @@ export const enableNitroTool: ToolDefinition<
         "utf8",
       );
 
+      viteConfigBackup = await addNitroToViteConfig(ctx.appPath);
+
       const result = await installPackages({
         packages: ["nitro"],
         appPath: ctx.appPath,
@@ -122,6 +126,9 @@ export const enableNitroTool: ToolDefinition<
         if (serverDirCreated) {
           await fs.rm(serverDirPath, { recursive: true, force: true });
         }
+        if (viteConfigBackup) {
+          await restoreViteConfig(viteConfigBackup);
+        }
       } catch (rollbackError) {
         logger.error("Rollback failed during enable_nitro:", rollbackError);
       }
@@ -133,6 +140,6 @@ export const enableNitroTool: ToolDefinition<
       throw error;
     }
 
-    return "Nitro server layer added. Follow the 'Nitro Server Layer' section in AI_RULES.md to update vite.config.ts and write the requested API route(s) under server/routes/api/.";
+    return "Nitro server layer added. Write the requested API route(s) under server/routes/api/ following the 'Nitro Server Layer' conventions in AI_RULES.md.";
   },
 };
