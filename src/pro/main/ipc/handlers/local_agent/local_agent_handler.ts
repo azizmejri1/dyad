@@ -42,6 +42,7 @@ import {
   requireAgentToolConsent,
   clearPendingConsentsForChat,
   clearPendingQuestionnairesForChat,
+  clearPendingIntegrationsForChat,
 } from "./tool_definitions";
 import {
   deployAllFunctionsIfNeeded,
@@ -997,9 +998,10 @@ export async function handleLocalAgentStream(
             for await (const part of fullStream) {
               if (abortController.signal.aborted) {
                 logger.log(`Stream aborted for chat ${req.chatId}`);
-                // Clean up pending consent/questionnaire requests to prevent stale UI banners
+                // Clean up pending consent/questionnaire/integration requests to prevent stale UI banners
                 clearPendingConsentsForChat(req.chatId);
                 clearPendingQuestionnairesForChat(req.chatId);
+                clearPendingIntegrationsForChat(req.chatId);
                 break;
               }
 
@@ -1460,10 +1462,11 @@ export async function handleLocalAgentStream(
 
     return true; // Success
   } catch (error) {
-    // Clean up any pending consent/questionnaire requests for this chat to prevent
+    // Clean up any pending consent/questionnaire/integration requests for this chat to prevent
     // stale UI banners and orphaned promises
     clearPendingConsentsForChat(req.chatId);
     clearPendingQuestionnairesForChat(req.chatId);
+    clearPendingIntegrationsForChat(req.chatId);
 
     if (abortController.signal.aborted) {
       // Handle cancellation
