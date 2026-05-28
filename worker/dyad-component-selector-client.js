@@ -10,6 +10,86 @@
   //detect if the user is using Mac
   const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
 
+  /* ---------- host transport (iframe postMessage OR WebSocket) ----------- */
+  // In the iframe path, the Dyad renderer is window.parent and we communicate
+  // via postMessage. When this script runs in a regular browser tab (opened
+  // via "Open in browser"), window.parent === window, so we fall back to a
+  // WebSocket bridge that the proxy server hosts at /__dyad_ws.
+  const inIframe = window.parent !== window;
+  let ws = null;
+  let wsTabId = null;
+  const wsOutboundQueue = [];
+
+  function sendToHost(msg) {
+    if (inIframe) {
+      window.parent.postMessage(msg, "*");
+      return;
+    }
+    if (ws && ws.readyState === 1 /* OPEN */) {
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch (e) {
+        // drop on the floor — best-effort transport
+      }
+    } else {
+      wsOutboundQueue.push(msg);
+    }
+  }
+
+  // Forward-declare so handlers below can call it; it's wired up after the
+  // window.addEventListener("message", ...) handler is defined.
+  let dispatchHostMessage = null;
+
+  function connectHostWebSocket() {
+    if (inIframe) return;
+    try {
+      wsTabId =
+        sessionStorage.getItem("__dyad_tab_id") ||
+        `dyad-tab-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      try {
+        sessionStorage.setItem("__dyad_tab_id", wsTabId);
+      } catch {}
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      const url = `${scheme}://${location.host}/__dyad_ws?role=tab&tabId=${encodeURIComponent(
+        wsTabId,
+      )}`;
+      ws = new WebSocket(url);
+      ws.addEventListener("open", () => {
+        while (wsOutboundQueue.length) {
+          try {
+            ws.send(JSON.stringify(wsOutboundQueue.shift()));
+          } catch {
+            break;
+          }
+        }
+      });
+      ws.addEventListener("message", (evt) => {
+        let data;
+        try {
+          data = JSON.parse(evt.data);
+        } catch {
+          return;
+        }
+        if (typeof dispatchHostMessage === "function") {
+          dispatchHostMessage(data);
+        }
+      });
+      ws.addEventListener("close", () => {
+        ws = null;
+        // Reconnect with a small backoff so the tab stays usable across
+        // proxy restarts (HMR, app restart, etc.)
+        setTimeout(connectHostWebSocket, 1500);
+      });
+      ws.addEventListener("error", () => {
+        try {
+          ws && ws.close();
+        } catch {}
+      });
+    } catch (e) {
+      console.warn("[dyad] failed to open host WebSocket", e);
+    }
+  }
+
   // The possible states are:
   // { type: 'inactive' }
   // { type: 'inspecting', element: ?HTMLElement }
@@ -161,18 +241,15 @@
 
       if (highlightedItem) {
         const rect = highlightedItem.el.getBoundingClientRect();
-        window.parent.postMessage(
-          {
-            type: "dyad-component-coordinates-updated",
-            coordinates: {
-              top: rect.top,
-              left: rect.left,
-              width: rect.width,
-              height: rect.height,
-            },
+        sendToHost({
+          type: "dyad-component-coordinates-updated",
+          coordinates: {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
           },
-          "*",
-        );
+        });
       }
     }
   }
@@ -462,13 +539,10 @@
       highlightedElement = null;
 
       // Only post message once for all elements with the same ID
-      window.parent.postMessage(
-        {
-          type: "dyad-component-deselected",
-          componentId: clickedComponentId,
-        },
-        "*",
-      );
+      sendToHost({
+        type: "dyad-component-deselected",
+        componentId: clickedComponentId,
+      });
       return;
     }
 
@@ -505,23 +579,20 @@
     }
 
     const rect = state.element.getBoundingClientRect();
-    window.parent.postMessage(
-      {
-        type: "dyad-component-selected",
-        component: {
-          id: clickedComponentId,
-          name: state.element.dataset.dyadName,
-          runtimeId: state.element.dataset.dyadRuntimeId,
-        },
-        coordinates: {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height,
-        },
+    sendToHost({
+      type: "dyad-component-selected",
+      component: {
+        id: clickedComponentId,
+        name: state.element.dataset.dyadName,
+        runtimeId: state.element.dataset.dyadRuntimeId,
       },
-      "*",
-    );
+      coordinates: {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
   }
 
   function onKeyDown(e) {
@@ -540,12 +611,9 @@
     const hasCtrlOrMeta = isMac ? e.metaKey : e.ctrlKey;
     if (key === "c" && hasShift && hasCtrlOrMeta) {
       e.preventDefault();
-      window.parent.postMessage(
-        {
-          type: "dyad-select-component-shortcut",
-        },
-        "*",
-      );
+      sendToHost({
+        type: "dyad-select-component-shortcut",
+      });
     }
   }
 
@@ -575,38 +643,37 @@
   }
 
   /* ---------- message bridge -------------------------------------------- */
-  window.addEventListener("message", (e) => {
-    if (e.source !== window.parent) return;
-    if (e.data.type === "dyad-pro-mode") {
-      isProMode = e.data.enabled;
+  function handleHostMessage(data) {
+    if (!data || typeof data !== "object") return;
+    if (data.type === "dyad-pro-mode") {
+      isProMode = data.enabled;
     }
-    if (e.data.type === "activate-dyad-component-selector") activate();
-    if (e.data.type === "deactivate-dyad-component-selector") deactivate();
-    if (e.data.type === "activate-dyad-visual-editing") {
+    if (data.type === "activate-dyad-component-selector") activate();
+    if (data.type === "deactivate-dyad-component-selector") deactivate();
+    if (data.type === "activate-dyad-visual-editing") {
       activate();
     }
-    if (e.data.type === "deactivate-dyad-visual-editing") {
+    if (data.type === "deactivate-dyad-visual-editing") {
       deactivate();
       clearOverlays();
     }
-    if (e.data.type === "clear-dyad-component-overlays") clearOverlays();
-    if (e.data.type === "update-dyad-overlay-positions") {
+    if (data.type === "clear-dyad-component-overlays") clearOverlays();
+    if (data.type === "update-dyad-overlay-positions") {
       updateAllOverlayPositions();
     }
-    if (e.data.type === "update-component-coordinates") {
-      // Store component coordinates for toolbar hover detection
-      componentCoordinates = e.data.coordinates;
+    if (data.type === "update-component-coordinates") {
+      componentCoordinates = data.coordinates;
     }
     if (
-      e.data.type === "remove-dyad-component-overlay" ||
-      e.data.type === "deselect-dyad-component"
+      data.type === "remove-dyad-component-overlay" ||
+      data.type === "deselect-dyad-component"
     ) {
-      if (e.data.componentId) {
-        removeOverlayById(e.data.componentId);
+      if (data.componentId) {
+        removeOverlayById(data.componentId);
       }
     }
-    if (e.data.type === "restore-dyad-component-overlays") {
-      const componentIds = e.data.componentIds;
+    if (data.type === "restore-dyad-component-overlays") {
+      const componentIds = data.componentIds;
       if (Array.isArray(componentIds)) {
         clearOverlays();
         for (const id of componentIds) {
@@ -620,7 +687,19 @@
         requestAnimationFrame(updateAllOverlayPositions);
       }
     }
+  }
+
+  dispatchHostMessage = handleHostMessage;
+
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent) return;
+    handleHostMessage(e.data);
   });
+
+  // In a regular browser tab there is no parent — open a WS to the proxy.
+  if (!inIframe) {
+    connectHostWebSocket();
+  }
 
   // Always listen for keyboard shortcuts
   window.addEventListener("keydown", onKeyDown, true);
@@ -663,12 +742,9 @@
           timeoutId = null;
         }
 
-        window.parent.postMessage(
-          {
-            type: "dyad-component-selector-initialized",
-          },
-          "*",
-        );
+        sendToHost({
+          type: "dyad-component-selector-initialized",
+        });
         console.debug("Dyad component selector initialized");
         return true;
       }

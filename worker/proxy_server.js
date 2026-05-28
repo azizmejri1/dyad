@@ -6,10 +6,245 @@ const { parentPort, workerData } = require("worker_threads");
 
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 
 const { URL } = require("url");
 const fs = require("fs");
 const path = require("path");
+
+/* ──────────────────────────── dyad host bridge ────────────────────────── */
+// Minimal WebSocket server used by the externally-launched preview tab (where
+// window.parent === window so postMessage cannot reach Dyad) and by the Dyad
+// renderer to exchange the same payloads that flow via postMessage in the
+// iframe path.
+const DYAD_WS_PATH = "/__dyad_ws";
+const DYAD_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const tabConnections = new Map(); // tabId -> socket
+const hostConnections = new Set(); // sockets in "host" role
+
+function wsAcceptKey(key) {
+  return crypto
+    .createHash("sha1")
+    .update(key + DYAD_WS_GUID)
+    .digest("base64");
+}
+
+function wsEncode(textPayload) {
+  const payload = Buffer.from(textPayload, "utf8");
+  const len = payload.length;
+  let header;
+  if (len < 126) {
+    header = Buffer.from([0x81, len]);
+  } else if (len < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  return Buffer.concat([header, payload]);
+}
+
+function wsEncodeClose(code = 1000) {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(code, 0);
+  return Buffer.concat([Buffer.from([0x88, 0x02]), payload]);
+}
+
+function attachWsParser(socket, onMessage, onClose) {
+  let buf = Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (true) {
+      if (buf.length < 2) return;
+      const b0 = buf[0];
+      const b1 = buf[1];
+      const opcode = b0 & 0x0f;
+      const masked = !!(b1 & 0x80);
+      let len = b1 & 0x7f;
+      let off = 2;
+      if (len === 126) {
+        if (buf.length < off + 2) return;
+        len = buf.readUInt16BE(off);
+        off += 2;
+      } else if (len === 127) {
+        if (buf.length < off + 8) return;
+        len = Number(buf.readBigUInt64BE(off));
+        off += 8;
+      }
+      let mask;
+      if (masked) {
+        if (buf.length < off + 4) return;
+        mask = buf.slice(off, off + 4);
+        off += 4;
+      }
+      if (buf.length < off + len) return;
+      let payload = buf.slice(off, off + len);
+      if (masked) {
+        const unmasked = Buffer.alloc(payload.length);
+        for (let i = 0; i < payload.length; i++)
+          unmasked[i] = payload[i] ^ mask[i % 4];
+        payload = unmasked;
+      }
+      buf = buf.slice(off + len);
+
+      if (opcode === 0x8) {
+        try {
+          socket.write(wsEncodeClose());
+        } catch {}
+        socket.end();
+        onClose?.();
+        return;
+      }
+      if (opcode === 0x9) {
+        // ping -> pong
+        const pong = Buffer.concat([
+          Buffer.from([0x8a, payload.length]),
+          payload,
+        ]);
+        try {
+          socket.write(pong);
+        } catch {}
+        continue;
+      }
+      if (opcode === 0x1) {
+        try {
+          onMessage(payload.toString("utf8"));
+        } catch (e) {
+          parentPort?.postMessage(
+            `[proxy-worker] ws message handler error: ${e?.message || e}`,
+          );
+        }
+      }
+      // ignore other opcodes (binary, continuation) for this prototype
+    }
+  });
+  socket.on("error", () => onClose?.());
+  socket.on("close", () => onClose?.());
+}
+
+function broadcastToHosts(obj) {
+  const frame = wsEncode(JSON.stringify(obj));
+  for (const s of hostConnections) {
+    try {
+      s.write(frame);
+    } catch {}
+  }
+}
+
+function sendToTab(tabId, obj) {
+  const sock = tabConnections.get(tabId);
+  if (!sock) return false;
+  try {
+    sock.write(wsEncode(JSON.stringify(obj)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function broadcastToTabs(obj) {
+  const frame = wsEncode(JSON.stringify(obj));
+  for (const s of tabConnections.values()) {
+    try {
+      s.write(frame);
+    } catch {}
+  }
+}
+
+function handleDyadWsUpgrade(req, socket, urlObj) {
+  const role = urlObj.searchParams.get("role");
+  const tabId = urlObj.searchParams.get("tabId");
+  const key = req.headers["sec-websocket-key"];
+  if (!key || (role !== "tab" && role !== "host")) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    return socket.destroy();
+  }
+  if (role === "tab" && !tabId) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing tabId");
+    return socket.destroy();
+  }
+  const accept = wsAcceptKey(key);
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+
+  if (role === "tab") {
+    // Replace any prior socket for this tabId (page reloads keep the same id
+    // only if the client persists it; otherwise this is just a new entry).
+    const prev = tabConnections.get(tabId);
+    if (prev && prev !== socket) {
+      try {
+        prev.end();
+      } catch {}
+    }
+    tabConnections.set(tabId, socket);
+    parentPort?.postMessage(
+      `[proxy-worker] dyad-ws tab connected tabId=${tabId}`,
+    );
+    broadcastToHosts({ type: "__dyad_ws_tab_connected", tabId });
+    attachWsParser(
+      socket,
+      (text) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          return;
+        }
+        broadcastToHosts({ tabId, data: parsed });
+      },
+      () => {
+        if (tabConnections.get(tabId) === socket) {
+          tabConnections.delete(tabId);
+          broadcastToHosts({ type: "__dyad_ws_tab_disconnected", tabId });
+          parentPort?.postMessage(
+            `[proxy-worker] dyad-ws tab disconnected tabId=${tabId}`,
+          );
+        }
+      },
+    );
+    return;
+  }
+
+  // role === "host"
+  hostConnections.add(socket);
+  parentPort?.postMessage("[proxy-worker] dyad-ws host connected");
+  // Replay the currently connected tabs so a late-joining host knows about them.
+  for (const id of tabConnections.keys()) {
+    try {
+      socket.write(
+        wsEncode(JSON.stringify({ type: "__dyad_ws_tab_connected", tabId: id })),
+      );
+    } catch {}
+  }
+  attachWsParser(
+    socket,
+    (text) => {
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return;
+      }
+      const { target, data } = parsed || {};
+      if (!data) return;
+      if (target) sendToTab(target, data);
+      else broadcastToTabs(data);
+    },
+    () => {
+      hostConnections.delete(socket);
+      parentPort?.postMessage("[proxy-worker] dyad-ws host disconnected");
+    },
+  );
+}
 
 /* ──────────────────────────── worker code ─────────────────────────────── */
 const LISTEN_HOST = "localhost";
@@ -415,6 +650,20 @@ const server = http.createServer((clientReq, clientRes) => {
 /* ----------------------------------------------------------------------- */
 
 server.on("upgrade", (req, socket, _head) => {
+  // Dyad bridge — terminate WS upgrades on /__dyad_ws locally instead of
+  // forwarding them upstream. Anything else falls through to the existing
+  // tunnel logic below.
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(req.url, "http://localhost");
+  } catch {
+    parsedUrl = null;
+  }
+  if (parsedUrl && parsedUrl.pathname === DYAD_WS_PATH) {
+    handleDyadWsUpgrade(req, socket, parsedUrl);
+    return;
+  }
+
   let target;
   try {
     target = buildTargetURL(req);

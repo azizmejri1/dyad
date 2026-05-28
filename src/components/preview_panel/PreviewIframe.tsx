@@ -85,6 +85,10 @@ import { VisualEditingToolbar } from "./VisualEditingToolbar";
 import { resolvePreviewBrowserUrl } from "./previewBrowserUrl";
 import { PreviewToolbar } from "./PreviewToolbar";
 import { PreviewLoadingScreen } from "./PreviewLoadingScreen";
+import {
+  getExternalPreviewBridge,
+  useExternalPreviewBridge,
+} from "./useExternalPreviewBridge";
 import { useTranslation } from "react-i18next";
 
 interface ErrorBannerProps {
@@ -198,6 +202,9 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const { t } = useTranslation("home");
   const selectedAppId = useAtomValue(selectedAppIdAtom);
   const { appUrl, originalUrl, mode } = useAtomValue(appUrlAtom);
+  // Open a WS bridge to the proxy so component selection works when the user
+  // opens the preview in a regular browser tab via "Open in browser".
+  useExternalPreviewBridge(appUrl);
   const setConsoleEntries = useSetAtom(appConsoleEntriesAtom);
   // State to trigger iframe reload
   const [reloadKey, setReloadKey] = useState(0);
@@ -772,10 +779,9 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
 
       if (event.data?.type === "dyad-component-selector-initialized") {
         setIsComponentSelectorInitialized(true);
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: "dyad-pro-mode", enabled: isProMode },
-          "*",
-        );
+        const proModeMsg = { type: "dyad-pro-mode", enabled: isProMode };
+        iframeRef.current?.contentWindow?.postMessage(proModeMsg, "*");
+        getExternalPreviewBridge().send(proModeMsg);
 
         // Take a screenshot if a commit just happened for this app.
         // Read from ref to avoid stale closure issues.
@@ -1197,23 +1203,22 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const handleActivateComponentSelector = () => {
     if (iframeRef.current?.contentWindow) {
       const newIsPicking = !isPicking;
+      const bridge = getExternalPreviewBridge();
       if (!newIsPicking) {
         // Clean up any text editing states when deactivating
-        iframeRef.current.contentWindow.postMessage(
-          { type: "cleanup-all-text-editing" },
-          "*",
-        );
+        const cleanup = { type: "cleanup-all-text-editing" };
+        iframeRef.current.contentWindow.postMessage(cleanup, "*");
+        bridge.send(cleanup);
       }
       setIsPicking(newIsPicking);
       setVisualEditingSelectedComponent(null);
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: newIsPicking
-            ? "activate-dyad-component-selector"
-            : "deactivate-dyad-component-selector",
-        },
-        "*",
-      );
+      const toggle = {
+        type: newIsPicking
+          ? "activate-dyad-component-selector"
+          : "deactivate-dyad-component-selector",
+      };
+      iframeRef.current.contentWindow.postMessage(toggle, "*");
+      bridge.send(toggle);
     }
   };
 
