@@ -16,9 +16,13 @@ import {
   Info,
   Bot,
   Ban,
+  ArrowLeft,
+  Loader2,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useVersions } from "@/hooks/useVersions";
+import { useSelectChat } from "@/hooks/useSelectChat";
+import { showError } from "@/lib/toast";
 import { useAtomValue } from "jotai";
 import { selectAtom } from "jotai/utils";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
@@ -96,7 +100,12 @@ const ChatMessage = ({
 }: ChatMessageProps) => {
   const { isStreaming } = useStreamChat();
   const appId = useAtomValue(selectedAppIdAtom);
-  const { versions: liveVersions } = useVersions(appId);
+  const {
+    versions: liveVersions,
+    restoreToMessage,
+    isRestoringToMessage,
+  } = useVersions(appId);
+  const { selectChat } = useSelectChat();
   const assistantTextContent =
     message.role === "assistant"
       ? stripCancelledResponseNotice(message.content)
@@ -189,6 +198,24 @@ const ChatMessage = ({
   const attachmentSize: AttachmentSize =
     attachments.length === 1 ? "lg" : attachments.length <= 3 ? "md" : "sm";
 
+  const showRestoreButton =
+    message.role === "user" && hasUserText && !isStreaming;
+
+  const handleRestoreToMessage = async () => {
+    if (appId == null || selectedChatId == null) {
+      return;
+    }
+    try {
+      const { newChatId } = await restoreToMessage({
+        chatId: selectedChatId,
+        messageId: message.id,
+      });
+      selectChat({ chatId: newChatId, appId });
+    } catch (error) {
+      showError(error);
+    }
+  };
+
   return (
     <div
       className={`flex ${message.role === "assistant" ? "justify-start" : "justify-end"}`}
@@ -200,9 +227,35 @@ const ChatMessage = ({
         {(message.role === "assistant" || hasUserText) && (
           <div
             className={`rounded-lg p-2 ${
-              message.role === "assistant" ? "" : "ml-24 bg-(--sidebar-accent)"
+              message.role === "assistant"
+                ? ""
+                : "relative ml-24 bg-(--sidebar-accent)"
             }`}
           >
+            {showRestoreButton && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      data-testid="restore-to-message-button"
+                      onClick={handleRestoreToMessage}
+                      disabled={isRestoringToMessage}
+                      aria-label="Restore to this point"
+                      className="absolute -top-2 -right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border bg-(--background) text-gray-500 opacity-0 shadow-sm transition-opacity duration-200 group-hover:opacity-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-100 dark:text-gray-400 dark:hover:text-gray-200"
+                    />
+                  }
+                >
+                  {isRestoringToMessage ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent>
+                  Restore to before this message in a new chat
+                </TooltipContent>
+              </Tooltip>
+            )}
             {message.role === "assistant" &&
             !hasAssistantText &&
             isStreaming &&
