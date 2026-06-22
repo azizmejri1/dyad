@@ -54,6 +54,9 @@ export default defineConfig({
   use: {
     baseURL: process.env.${TEST_BASE_URL_ENV} || "http://localhost:32100",${channelLine}
     screenshot: "only-on-failure",
+    // Record every test so the Tests panel can replay it (with the animated
+    // cursor injected by tests/dyad-fixtures.ts).
+    video: "on",
     trace: "off",
   },
 });
@@ -122,6 +125,87 @@ export function detectSystemBrowserChannel(): BrowserChannel | null {
   return null;
 }
 
+/**
+ * Source for tests/dyad-fixtures.ts. Re-exports an extended `test` that injects
+ * a visible, CSS-animated cursor into the page so recorded videos show the
+ * pointer gliding between elements. Generated tests import { test, expect } from
+ * "./dyad-fixtures" instead of "@playwright/test".
+ *
+ * The dot has a CSS transition, so even Playwright's single-step pointer moves
+ * (on a normal click/fill) animate smoothly — no need to force mouse `steps`.
+ */
+export function buildCursorFixtures(): string {
+  return `// ${DYAD_CONFIG_SENTINEL}. Injects a visible, CSS-animated cursor so the
+// recorded test video shows the pointer gliding between elements. Generated
+// tests import { test, expect } from "./dyad-fixtures" instead of
+// "@playwright/test" to pick this up automatically.
+import { test as base, expect } from "@playwright/test";
+
+export const test = base.extend({
+  page: async ({ page }, use) => {
+    await page.addInitScript(() => {
+      const id = "__dyad_cursor__";
+      const ensure = () => {
+        if (!document.body || document.getElementById(id)) return;
+        const dot = document.createElement("div");
+        dot.id = id;
+        dot.style.cssText =
+          "position:fixed;top:0;left:0;z-index:2147483647;width:18px;height:18px;" +
+          "margin:-9px 0 0 -9px;border-radius:50%;background:rgba(239,68,68,.55);" +
+          "border:2px solid rgba(239,68,68,.9);pointer-events:none;" +
+          "transition:left .18s ease-out,top .18s ease-out;will-change:left,top;";
+        document.body.appendChild(dot);
+      };
+      const move = (event: MouseEvent) => {
+        const dot = document.getElementById(id) as HTMLElement | null;
+        if (!dot) {
+          ensure();
+          return;
+        }
+        dot.style.left = event.clientX + "px";
+        dot.style.top = event.clientY + "px";
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", ensure);
+      } else {
+        ensure();
+      }
+      window.addEventListener("mousemove", move, true);
+    });
+    await use(page);
+  },
+});
+
+export { expect };
+`;
+}
+
+/**
+ * Writes tests/dyad-fixtures.ts so generated specs can import the
+ * cursor-injecting `test`. Idempotent: only writes when missing or when the
+ * existing file is one we generated (never clobbers a user-customized file).
+ */
+function writeCursorFixtures(appPath: string): void {
+  const fixturesPath = path.join(appPath, "tests", "dyad-fixtures.ts");
+  try {
+    if (fs.existsSync(fixturesPath)) {
+      const existing = fs.readFileSync(fixturesPath, "utf8");
+      // Respect a user-customized fixtures file.
+      if (!existing.includes(DYAD_CONFIG_SENTINEL)) return;
+      const next = buildCursorFixtures();
+      if (existing === next) return;
+      fs.writeFileSync(fixturesPath, next);
+      logger.info("Refreshed tests/dyad-fixtures.ts");
+      return;
+    }
+    fs.mkdirSync(path.dirname(fixturesPath), { recursive: true });
+    fs.writeFileSync(fixturesPath, buildCursorFixtures());
+    logger.info("Wrote tests/dyad-fixtures.ts");
+  } catch (err) {
+    logger.warn(`Failed to write tests/dyad-fixtures.ts: ${err}`);
+  }
+}
+
 export function isPlaywrightInstalled(appPath: string): boolean {
   return fs.existsSync(
     path.join(appPath, "node_modules", "@playwright", "test", "package.json"),
@@ -183,8 +267,14 @@ function readConfigText(appPath: string): string | null {
 
 /** True when the existing config drives a system browser via `channel`. */
 function configUsesChannel(appPath: string): boolean {
+  return readConfigChannel(appPath) !== null;
+}
+
+/** The `channel` value in the existing config, or null if none/unrecognized. */
+function readConfigChannel(appPath: string): BrowserChannel | null {
   const text = readConfigText(appPath);
-  return text != null && /\bchannel:\s*["']/.test(text);
+  const match = text?.match(/\bchannel:\s*["'](chrome|msedge)["']/);
+  return (match?.[1] as BrowserChannel | undefined) ?? null;
 }
 
 /** True when the existing config is one we generated (safe to regenerate). */
@@ -294,6 +384,15 @@ export async function ensurePlaywrightBootstrap({
       onOutput?.(
         `Using your installed ${detectedChannel === "chrome" ? "Chrome" : "Edge"} — no browser download needed.\n`,
       );
+    } else if (isDyadGeneratedConfig(appPath)) {
+      // Refresh older Dyad-generated configs to the current template (e.g. to
+      // pick up newly-added `use` options like video) while preserving the
+      // existing browser choice. Only rewrite when the content actually changes.
+      const channel = readConfigChannel(appPath);
+      const next = buildPlaywrightConfig(channel);
+      if (readConfigText(appPath) !== next) {
+        writePlaywrightConfig(appPath, channel);
+      }
     }
   }
 
@@ -326,6 +425,7 @@ export async function ensurePlaywrightBootstrap({
   // Idempotent app configuration — cheap, runs every time.
   appendGitignoreEntries(appPath);
   ensureTestScript(appPath);
+  writeCursorFixtures(appPath);
 
   return { installed: !packageInstalled || downloadedBrowser };
 }

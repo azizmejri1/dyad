@@ -52,6 +52,59 @@ function getRunningBaseUrl(appId: number): string | null {
   return runningApps.get(appId)?.proxyUrl ?? null;
 }
 
+/**
+ * Reads a Playwright artifact (screenshot/video) from disk and returns it as a
+ * base64 data URL, or null when unavailable. Security: only files whose
+ * extension is allowed AND which resolve (after following symlinks) to inside
+ * the app directory are read, so an arbitrary path can't be slurped into the
+ * renderer. Playwright reports absolute paths; relative ones resolve against
+ * the app dir.
+ */
+function readAppArtifactAsDataUrl({
+  appPath,
+  inputPath,
+  allowedExtensions,
+  mimeType,
+}: {
+  appPath: string;
+  inputPath: string;
+  allowedExtensions: string[];
+  mimeType: string;
+}): string | null {
+  const resolved = path.isAbsolute(inputPath)
+    ? path.resolve(inputPath)
+    : path.resolve(appPath, inputPath);
+  if (!allowedExtensions.includes(path.extname(resolved).toLowerCase())) {
+    return null;
+  }
+  if (!fs.existsSync(resolved)) {
+    return null;
+  }
+  // Resolve symlinks before the containment check: a symlink inside the app dir
+  // could otherwise point outside it (e.g. test-results/x.png -> /etc/passwd)
+  // and pass a string-only check while the read escapes.
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(resolved);
+  } catch (error) {
+    logger.warn(`Failed to resolve artifact path ${resolved}: ${error}`);
+    return null;
+  }
+  const rel = path.relative(appPath, realPath);
+  const insideApp =
+    rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  if (!insideApp) {
+    return null;
+  }
+  try {
+    const buf = fs.readFileSync(realPath);
+    return `data:${mimeType};base64,${buf.toString("base64")}`;
+  } catch (error) {
+    logger.warn(`Failed to read artifact ${realPath}: ${error}`);
+    return null;
+  }
+}
+
 function emitOutput(
   event: IpcMainInvokeEvent,
   appId: number,
@@ -93,45 +146,34 @@ export function registerTestsHandlers() {
     async (_event, params) => {
       const app = await getApp(params.appId);
       const appPath = getDyadAppPath(app.path);
-
-      // Security: only read screenshots that live inside this app's directory
-      // and are PNGs, so an arbitrary path can't be slurped into the renderer.
-      // Playwright reports absolute paths, but resolve relative ones against the
-      // app dir just in case.
-      const resolved = path.isAbsolute(params.path)
-        ? path.resolve(params.path)
-        : path.resolve(appPath, params.path);
-      if (path.extname(resolved).toLowerCase() !== ".png") {
-        return { dataUrl: null };
-      }
-      if (!fs.existsSync(resolved)) {
-        return { dataUrl: null };
-      }
-      // Resolve symlinks before the containment check: a symlink inside the app
-      // dir could otherwise point outside it (e.g. test-results/x.png ->
-      // /etc/passwd) and pass a string-only check while the read escapes.
-      let realPath: string;
-      try {
-        realPath = fs.realpathSync(resolved);
-      } catch (error) {
-        logger.warn(`Failed to resolve screenshot path ${resolved}: ${error}`);
-        return { dataUrl: null };
-      }
-      const rel = path.relative(appPath, realPath);
-      const insideApp =
-        rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-      if (!insideApp) {
-        return { dataUrl: null };
-      }
-      try {
-        const buf = fs.readFileSync(realPath);
-        return { dataUrl: `data:image/png;base64,${buf.toString("base64")}` };
-      } catch (error) {
-        logger.warn(`Failed to read screenshot ${realPath}: ${error}`);
-        return { dataUrl: null };
-      }
+      return {
+        dataUrl: readAppArtifactAsDataUrl({
+          appPath,
+          inputPath: params.path,
+          allowedExtensions: [".png"],
+          mimeType: "image/png",
+        }),
+      };
     },
   );
+
+  createTypedHandler(testsContracts.getTestVideo, async (_event, params) => {
+    const app = await getApp(params.appId);
+    const appPath = getDyadAppPath(app.path);
+    return {
+      dataUrl: readAppArtifactAsDataUrl({
+        appPath,
+        inputPath: params.path,
+        // Playwright records .webm by default; allow .mp4 too in case the user
+        // configures a different recorder.
+        allowedExtensions: [".webm", ".mp4"],
+        mimeType:
+          path.extname(params.path).toLowerCase() === ".mp4"
+            ? "video/mp4"
+            : "video/webm",
+      }),
+    };
+  });
 
   createTypedHandler(
     testsContracts.runAppTests,

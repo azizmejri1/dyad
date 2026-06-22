@@ -354,12 +354,12 @@ export const TEST_WRITING_GUIDANCE = `# Writing end-to-end tests
 
 When the user asks you to write an end-to-end (e2e) test for a feature or flow, write a Playwright test.
 
-- Write the spec file under the app's \`tests/\` folder, named after the flow (e.g. \`tests/signup.spec.ts\`).
+- Write the spec file DIRECTLY under the app's \`tests/\` folder (not a subfolder), named after the flow (e.g. \`tests/signup.spec.ts\`).
 - In Build mode, emit it with a \`<dyad-generate-test>\` tag (NOT \`<dyad-write>\`) so it shows up in the Tests panel:
   <dyad-generate-test path="tests/signup.spec.ts" description="Tests the signup flow">
   ...test code...
   </dyad-generate-test>
-- Import from \`@playwright/test\`: \`import { test, expect } from "@playwright/test";\`.
+- Import \`test\` and \`expect\` from the local fixtures file: \`import { test, expect } from "./dyad-fixtures";\` (NOT directly from \`@playwright/test\`). Dyad generates \`tests/dyad-fixtures.ts\` automatically — it records the run and shows an animated cursor in the replay. Keep specs directly under \`tests/\` so this relative import resolves.
 - Navigate with \`await page.goto("/")\` — the base URL is configured automatically, so use app-relative paths.
 - Prefer role- and text-based locators (\`page.getByRole\`, \`page.getByText\`, \`page.getByLabel\`, \`page.getByPlaceholder\`) over CSS/XPath selectors. They are far more robust.
 - Rely on \`await expect(locator).toBeVisible()\` / \`toHaveText()\` etc. — these auto-wait, so you do NOT need manual sleeps or \`waitForTimeout\`.

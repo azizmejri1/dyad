@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCursorFixtures,
   buildPlaywrightConfig,
   detectSystemBrowserChannel,
   TEST_BASE_URL_ENV,
@@ -25,6 +26,24 @@ describe("buildPlaywrightConfig", () => {
     expect(config).toContain(TEST_RESULTS_JSON);
     // baseURL points at the running proxy, never a webServer config block.
     expect(config).not.toContain("webServer:");
+  });
+
+  it("records video on every run so tests are replayable", () => {
+    expect(buildPlaywrightConfig(null)).toContain('video: "on"');
+    expect(buildPlaywrightConfig("chrome")).toContain('video: "on"');
+  });
+});
+
+describe("buildCursorFixtures", () => {
+  it("re-exports test/expect and injects a cursor via addInitScript", () => {
+    const source = buildCursorFixtures();
+    expect(source).toContain('from "@playwright/test"');
+    expect(source).toContain("export const test");
+    expect(source).toContain("export { expect }");
+    // Injects an init script that draws and moves a cursor dot.
+    expect(source).toContain("addInitScript");
+    expect(source).toContain("mousemove");
+    expect(source).toContain("transition:left");
   });
 });
 

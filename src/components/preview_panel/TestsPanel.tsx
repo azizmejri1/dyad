@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Image as ImageIcon,
+  Video as VideoIcon,
   Sparkles,
 } from "lucide-react";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
@@ -126,10 +127,14 @@ function TestRow({
 }: TestRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [video, setVideo] = useState<string | null>(null);
   const fileName = file.split("/").pop() ?? file;
   const isFailing = status === "failed" || status === "inconclusive";
-  const canExpand = isFailing && !!result?.error;
   const screenshotPath = result?.screenshotPath;
+  const videoPath = result?.videoPath;
+  // Expandable when there's something to show: an error/screenshot on failure,
+  // or a recording to replay (including for passing tests).
+  const canExpand = (isFailing && !!result?.error) || !!videoPath;
 
   // Lazily load the failure screenshot when the row is expanded.
   useEffect(() => {
@@ -150,6 +155,26 @@ function TestRow({
       cancelled = true;
     };
   }, [expanded, screenshotPath, appId]);
+
+  // Lazily load the recorded video when the row is expanded.
+  useEffect(() => {
+    if (!expanded || !videoPath) {
+      setVideo(null);
+      return;
+    }
+    let cancelled = false;
+    ipc.tests
+      .getTestVideo({ appId, path: videoPath })
+      .then((res) => {
+        if (!cancelled) setVideo(res.dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setVideo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, videoPath, appId]);
 
   return (
     <div className="group border-b border-border/60 last:border-b-0">
@@ -220,9 +245,30 @@ function TestRow({
       </div>
       {expanded && canExpand && (
         <div className="px-3 pb-3 pl-10 space-y-2">
-          <pre className="text-[11px] whitespace-pre-wrap break-words bg-(--background-darkest) rounded-md p-2 max-h-60 overflow-auto text-red-700 dark:text-red-300">
-            {result?.error}
-          </pre>
+          {result?.error && (
+            <pre className="text-[11px] whitespace-pre-wrap break-words bg-(--background-darkest) rounded-md p-2 max-h-60 overflow-auto text-red-700 dark:text-red-300">
+              {result.error}
+            </pre>
+          )}
+          {videoPath && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <VideoIcon size={12} />
+                Test recording
+              </div>
+              {video ? (
+                <video
+                  src={video}
+                  controls
+                  className="max-h-72 w-auto rounded-md border border-border"
+                />
+              ) : (
+                <div className="text-[11px] text-muted-foreground">
+                  Loading recording…
+                </div>
+              )}
+            </div>
+          )}
           {screenshotPath && (
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground">

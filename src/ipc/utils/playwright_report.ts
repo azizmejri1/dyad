@@ -97,6 +97,13 @@ function screenshotFromResult(r: PwTestResult): string | undefined {
   return shot?.path;
 }
 
+function videoFromResult(r: PwTestResult): string | undefined {
+  const video = r.attachments?.find(
+    (a) => a.name === "video" && typeof a.path === "string",
+  );
+  return video?.path;
+}
+
 interface SpecWithFile {
   spec: PwSpec;
   /** Resolved file path: spec's own, or inherited from an ancestor suite. */
@@ -150,6 +157,7 @@ export function parsePlaywrightReport(
       sawResult: boolean;
       error?: string;
       screenshotPath?: string;
+      videoPath?: string;
     }
   >();
 
@@ -176,6 +184,7 @@ export function parsePlaywrightReport(
         sawResult: boolean;
         error?: string;
         screenshotPath?: string;
+        videoPath?: string;
       });
 
     for (const test of spec.tests ?? []) {
@@ -184,6 +193,12 @@ export function parsePlaywrightReport(
       if (!final) continue;
       entry.sawResult = true;
       entry.durationMs += final.duration ?? 0;
+
+      // Capture the recording for every status (we record all runs), so passing
+      // tests are replayable too — not just failures like the screenshot below.
+      if (!entry.videoPath) {
+        entry.videoPath = videoFromResult(final);
+      }
 
       const status = final.status ?? "";
       if (status === "passed" || status === "skipped") continue;
@@ -224,6 +239,7 @@ export function parsePlaywrightReport(
       durationMs: entry.durationMs || undefined,
       error: entry.error,
       screenshotPath: entry.screenshotPath,
+      videoPath: entry.videoPath,
     });
   }
 

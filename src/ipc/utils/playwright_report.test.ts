@@ -128,6 +128,74 @@ describe("parsePlaywrightReport", () => {
     expect(result.file).toBe("tests/a.spec.ts");
   });
 
+  it("captures the video path for passing tests (for replay)", () => {
+    const report: PwReport = {
+      suites: [
+        {
+          file: "tests/a.spec.ts",
+          specs: [
+            {
+              file: "tests/a.spec.ts",
+              tests: [
+                {
+                  results: [
+                    {
+                      status: "passed",
+                      duration: 100,
+                      attachments: [
+                        {
+                          name: "video",
+                          path: "/apps/my-app/test-results/a/video.webm",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const [result] = parsePlaywrightReport(report, appPath);
+    expect(result.status).toBe("passed");
+    expect(result.videoPath).toBe("/apps/my-app/test-results/a/video.webm");
+  });
+
+  it("captures both screenshot and video on failure", () => {
+    const report: PwReport = {
+      suites: [
+        {
+          file: "tests/a.spec.ts",
+          specs: [
+            {
+              file: "tests/a.spec.ts",
+              tests: [
+                {
+                  results: [
+                    {
+                      status: "failed",
+                      duration: 100,
+                      error: { message: "expect(x).toBe(y)" },
+                      attachments: [
+                        { name: "screenshot", path: "/apps/my-app/shot.png" },
+                        { name: "video", path: "/apps/my-app/video.webm" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const [result] = parsePlaywrightReport(report, appPath);
+    expect(result.status).toBe("failed");
+    expect(result.screenshotPath).toBe("/apps/my-app/shot.png");
+    expect(result.videoPath).toBe("/apps/my-app/video.webm");
+  });
+
   it("aggregates a file with both assertion and infra failures as failed", () => {
     const report: PwReport = {
       suites: [

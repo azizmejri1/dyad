@@ -31,6 +31,8 @@ export const TestResultSchema = z.object({
   error: z.string().optional(),
   /** Best-effort absolute path to a failure screenshot. */
   screenshotPath: z.string().optional(),
+  /** Best-effort absolute path to the recorded video (.webm), for replay. */
+  videoPath: z.string().optional(),
 });
 export type TestResult = z.infer<typeof TestResultSchema>;
 
@@ -79,6 +81,17 @@ export const GetTestScreenshotResultSchema = z.object({
   dataUrl: z.string().nullable(),
 });
 
+export const GetTestVideoParamsSchema = z.object({
+  appId: z.number(),
+  /** Absolute path to the video, as reported by Playwright. */
+  path: z.string(),
+});
+
+export const GetTestVideoResultSchema = z.object({
+  /** WebM data URL, or null if unavailable. */
+  dataUrl: z.string().nullable(),
+});
+
 // =============================================================================
 // Tests Contracts
 // =============================================================================
@@ -106,6 +119,12 @@ export const testsContracts = {
     channel: "tests:screenshot",
     input: GetTestScreenshotParamsSchema,
     output: GetTestScreenshotResultSchema,
+  }),
+
+  getTestVideo: defineContract({
+    channel: "tests:video",
+    input: GetTestVideoParamsSchema,
+    output: GetTestVideoResultSchema,
   }),
 } as const;
 
