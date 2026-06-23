@@ -30,6 +30,7 @@ import { generateImageTool } from "./tools/generate_image";
 import { updateTodosTool } from "./tools/update_todos";
 import { runTypeChecksTool } from "./tools/run_type_checks";
 import { generateTestTool } from "./tools/generate_test";
+import { runTestTool } from "./tools/run_test";
 import { grepTool } from "./tools/grep";
 import { codeSearchTool } from "./tools/code_search";
 import { exploreCodeTool } from "./tools/explore_code";
@@ -101,6 +102,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   updateTodosTool,
   runTypeChecksTool,
   generateTestTool,
+  runTestTool,
   readGuideTool,
   executeSandboxScriptTool,
   searchMcpToolsTool,
@@ -433,7 +435,7 @@ const PLANNING_SPECIFIC_TOOLS = new Set([
 /**
  * Tools only available in Pro agent mode (excluded from basic agent mode).
  */
-const PRO_AGENT_ONLY_TOOLS = new Set<string>();
+const PRO_AGENT_ONLY_TOOLS = new Set<string>(["run_test"]);
 
 /**
  * Tools that are part of the app blueprint flow. Excluded when the feature

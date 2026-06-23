@@ -365,7 +365,15 @@ When the user asks you to write an end-to-end (e2e) test for a feature or flow, 
 - Rely on \`await expect(locator).toBeVisible()\` / \`toHaveText()\` etc. — these auto-wait, so you do NOT need manual sleeps or \`waitForTimeout\`.
 - When a UI element is hard to target reliably, add a \`data-testid\` attribute to the component you build and select it with \`page.getByTestId("...")\`. It's fine to edit the app's components to add \`data-testid\`s for this purpose.
 - Keep each test focused on one happy-path user flow. Write tests that the app is expected to PASS.
-- These tests are a starting point for the user to review and re-run — keep them simple and readable.`;
+- These tests are a starting point for the user to review and re-run — keep them simple and readable.
+
+## Tests from a recorded flow
+
+The user can record a flow by interacting with the live preview. When a turn contains a "recorded flow" — a numbered list of user actions (clicks, fills, navigations, etc.) — turn it into a single Playwright test:
+- The recording captures ACTIONS ONLY. It is YOUR job to add meaningful assertions: after the actions, assert the expected outcome the user was demonstrating (e.g. a success message appears, a new item shows up, the URL changed).
+- Map each recorded action to a robust locator using the hints provided (prefer role + accessible name, then label/placeholder/text/testId). Do not copy brittle CSS selectors.
+- Preserve the order of the recorded actions. Use the recorded values for fills/selects (a masked password value means "type a password" — use a realistic placeholder value).
+- If you have the \`run_test\` tool available, after writing the test with \`generate_test\`, run it with \`run_test\` to verify it passes. If it fails, fix the test (or the app) and re-run. Stop after at most two fix attempts and tell the user what's still failing.`;
 
 const BUILD_SYSTEM_PROMPT_BASE = `${BUILD_SYSTEM_PREFIX}
 

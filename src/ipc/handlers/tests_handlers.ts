@@ -61,6 +61,157 @@ function emitOutput(
   safeSend(event.sender, "tests:output", { appId, chunk, phase });
 }
 
+export interface RunAppTestsCoreOptions {
+  appId: number;
+  /** When set, runs a single spec file (relative path); otherwise runs all. */
+  testFile?: string;
+  /** Aborts an in-flight bootstrap or run. */
+  signal?: AbortSignal;
+  /** Streams raw bootstrap/runner output as it arrives. */
+  onOutput?: (chunk: string, phase: "setup" | "running") => void;
+}
+
+/**
+ * Bootstrap Playwright (if needed), run the tests against the running dev
+ * server's proxy URL, and parse the JSON report. Shared by the `tests:run`
+ * IPC handler (UI "Run") and the Pro `run_test` agent tool, so both produce
+ * identical results and error taxonomy.
+ */
+export async function runAppTestsCore({
+  appId,
+  testFile,
+  signal,
+  onOutput,
+}: RunAppTestsCoreOptions): Promise<RunAppTestsResult> {
+  const app = await getApp(appId);
+  const appPath = getDyadAppPath(app.path);
+  const emit = (chunk: string, phase: "setup" | "running") =>
+    onOutput?.(chunk, phase);
+
+  // Reject anything that doesn't look like one of our spec paths before it
+  // reaches the Playwright CLI (the Zod schema only checks it's a string).
+  if (testFile !== undefined && !TEST_FILE_PATTERN.test(testFile)) {
+    return {
+      appId,
+      results: [],
+      infraError: { message: `Invalid test file: ${testFile}` },
+    };
+  }
+
+  // Gate: the dev server must be running so baseURL resolves.
+  const baseUrl = getRunningBaseUrl(appId);
+  if (!baseUrl) {
+    return {
+      appId,
+      results: [],
+      infraError: {
+        message:
+          "Start the app before running tests — the dev server isn't running.",
+      },
+    };
+  }
+
+  // 1. Lazy bootstrap (install Playwright + browser, write config), streamed.
+  let installed = false;
+  try {
+    const result = await ensurePlaywrightBootstrap({
+      appPath,
+      signal,
+      onOutput: (chunk) => emit(chunk, "setup"),
+    });
+    installed = result.installed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`Playwright bootstrap failed: ${message}`);
+    return { appId, results: [], infraError: { message } };
+  }
+
+  if (signal?.aborted) {
+    return { appId, results: [], infraError: { message: "Test run stopped." } };
+  }
+
+  // 2. Run the tests. Use list reporter for live stdout + json for parsing.
+  const resultsJsonPath = path.join(appPath, TEST_RESULTS_JSON);
+  // Clear any stale report so a crash doesn't surface old results.
+  try {
+    fs.rmSync(resultsJsonPath, { force: true });
+  } catch {
+    // ignore
+  }
+
+  // Pass args as an array (never a shell string) so a test path can't be
+  // interpreted as a shell command.
+  const args = ["playwright", "test"];
+  if (testFile) {
+    args.push(testFile);
+  }
+  args.push("--reporter=list,json");
+
+  const run = await spawnStreaming({
+    command: "npx",
+    args,
+    cwd: appPath,
+    env: {
+      ...process.env,
+      [TEST_BASE_URL_ENV]: baseUrl,
+      PLAYWRIGHT_JSON_OUTPUT_NAME: TEST_RESULTS_JSON,
+      // Non-interactive: never try to open/serve an HTML report.
+      CI: "true",
+    },
+    signal,
+    onOutput: (chunk) => emit(chunk, "running"),
+  });
+
+  if (run.aborted) {
+    return { appId, results: [], infraError: { message: "Test run stopped." } };
+  }
+
+  // 3. Parse the JSON report.
+  let results: TestResult[] = [];
+  let parseOk = false;
+  if (fs.existsSync(resultsJsonPath)) {
+    try {
+      const raw = fs.readFileSync(resultsJsonPath, "utf8");
+      results = parsePlaywrightReport(JSON.parse(raw), appPath);
+      parseOk = true;
+    } catch (error) {
+      logger.error(`Failed to parse Playwright report: ${error}`);
+    }
+  }
+
+  if (!parseOk || results.length === 0) {
+    // No report produced — Playwright itself failed (missing browser,
+    // config error, dev server unreachable). Infra/amber.
+    const tail = run.stderr.trim() || run.stdout.trim();
+    return {
+      appId,
+      results,
+      infraError: {
+        message:
+          tail.slice(-1500) ||
+          "The test runner didn't produce a report. Check the output for details.",
+      },
+    };
+  }
+
+  // 4. Instrumentation (first-run pass-rate + related metrics).
+  const passed = results.filter((r) => r.status === "passed").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  const inconclusive = results.filter(
+    (r) => r.status === "inconclusive",
+  ).length;
+  sendTelemetryEvent("e2e_tests_run", {
+    total: results.length,
+    passed,
+    failed,
+    inconclusive,
+    first_run: installed,
+    single_file: Boolean(testFile),
+  });
+
+  return { appId, results };
+}
+
 export function registerTestsHandlers() {
   createTypedHandler(testsContracts.listAppTests, async (_event, params) => {
     const app = await getApp(params.appId);
@@ -137,148 +288,20 @@ export function registerTestsHandlers() {
     testsContracts.runAppTests,
     async (event, params): Promise<RunAppTestsResult> => {
       const { appId, testFile } = params;
-      const app = await getApp(appId);
-      const appPath = getDyadAppPath(app.path);
 
-      // Reject anything that doesn't look like one of our spec paths before it
-      // reaches the Playwright CLI (the Zod schema only checks it's a string).
-      if (testFile !== undefined && !TEST_FILE_PATTERN.test(testFile)) {
-        return {
-          appId,
-          results: [],
-          infraError: {
-            message: `Invalid test file: ${testFile}`,
-          },
-        };
-      }
-
-      // Gate: the dev server must be running so baseURL resolves.
-      const baseUrl = getRunningBaseUrl(appId);
-      if (!baseUrl) {
-        return {
-          appId,
-          results: [],
-          infraError: {
-            message:
-              "Start the app before running tests — the dev server isn't running.",
-          },
-        };
-      }
-
-      // Cancel any prior run for this app, then start a fresh controller.
+      // Cancel any prior run for this app, then start a fresh controller so the
+      // Stop button can abort this run.
       testRunControllers.get(appId)?.abort();
       const controller = new AbortController();
       testRunControllers.set(appId, controller);
 
       try {
-        // 1. Lazy bootstrap (install Playwright + browser, write config), streamed.
-        let installed = false;
-        try {
-          const result = await ensurePlaywrightBootstrap({
-            appPath,
-            signal: controller.signal,
-            onOutput: (chunk) => emitOutput(event, appId, chunk, "setup"),
-          });
-          installed = result.installed;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          logger.error(`Playwright bootstrap failed: ${message}`);
-          return { appId, results: [], infraError: { message } };
-        }
-
-        if (controller.signal.aborted) {
-          return {
-            appId,
-            results: [],
-            infraError: { message: "Test run stopped." },
-          };
-        }
-
-        // 2. Run the tests. Use list reporter for live stdout + json for parsing.
-        const resultsJsonPath = path.join(appPath, TEST_RESULTS_JSON);
-        // Clear any stale report so a crash doesn't surface old results.
-        try {
-          fs.rmSync(resultsJsonPath, { force: true });
-        } catch {
-          // ignore
-        }
-
-        // Pass args as an array (never a shell string) so a test path can't be
-        // interpreted as a shell command.
-        const args = ["playwright", "test"];
-        if (testFile) {
-          args.push(testFile);
-        }
-        args.push("--reporter=list,json");
-
-        const run = await spawnStreaming({
-          command: "npx",
-          args,
-          cwd: appPath,
-          env: {
-            ...process.env,
-            [TEST_BASE_URL_ENV]: baseUrl,
-            PLAYWRIGHT_JSON_OUTPUT_NAME: TEST_RESULTS_JSON,
-            // Non-interactive: never try to open/serve an HTML report.
-            CI: "true",
-          },
+        return await runAppTestsCore({
+          appId,
+          testFile,
           signal: controller.signal,
-          onOutput: (chunk) => emitOutput(event, appId, chunk, "running"),
+          onOutput: (chunk, phase) => emitOutput(event, appId, chunk, phase),
         });
-
-        if (run.aborted) {
-          return {
-            appId,
-            results: [],
-            infraError: { message: "Test run stopped." },
-          };
-        }
-
-        // 3. Parse the JSON report.
-        let results: TestResult[] = [];
-        let parseOk = false;
-        if (fs.existsSync(resultsJsonPath)) {
-          try {
-            const raw = fs.readFileSync(resultsJsonPath, "utf8");
-            results = parsePlaywrightReport(JSON.parse(raw), appPath);
-            parseOk = true;
-          } catch (error) {
-            logger.error(`Failed to parse Playwright report: ${error}`);
-          }
-        }
-
-        if (!parseOk || results.length === 0) {
-          // No report produced — Playwright itself failed (missing browser,
-          // config error, dev server unreachable). Infra/amber.
-          const tail = run.stderr.trim() || run.stdout.trim();
-          return {
-            appId,
-            results,
-            infraError: {
-              message:
-                tail.slice(-1500) ||
-                "The test runner didn't produce a report. Check the output for details.",
-            },
-          };
-        }
-
-        // 4. Instrumentation (first-run pass-rate + related metrics).
-        const passed = results.filter((r) => r.status === "passed").length;
-        const failed = results.filter((r) => r.status === "failed").length;
-        const inconclusive = results.filter(
-          (r) => r.status === "inconclusive",
-        ).length;
-        sendTelemetryEvent("e2e_tests_run", {
-          total: results.length,
-          passed,
-          failed,
-          inconclusive,
-          first_run: installed,
-          single_file: Boolean(testFile),
-        });
-
-        return { appId, results };
       } finally {
         if (testRunControllers.get(appId) === controller) {
           testRunControllers.delete(appId);
