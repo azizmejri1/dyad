@@ -307,6 +307,7 @@ export function TestsPanel() {
 
   const [loadingSpecs, setLoadingSpecs] = useState(false);
   const [outputOpen, setOutputOpen] = useState(false);
+  const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const outputRef = useRef<HTMLPreElement>(null);
 
   const devServerRunning = appUrl.appUrl !== null;
@@ -367,6 +368,20 @@ export function TestsPanel() {
     return unsubscribe;
   }, [setRunState]);
 
+  // Subscribe to the live screencast feed from the running test browser.
+  useEffect(() => {
+    const unsubscribe = ipc.events.tests.onFrame((payload) => {
+      if (payload.appId !== selectedAppId) return;
+      setLiveFrame(payload.dataUrl);
+    });
+    return unsubscribe;
+  }, [selectedAppId]);
+
+  // Drop the last live frame when switching apps so it doesn't bleed across.
+  useEffect(() => {
+    setLiveFrame(null);
+  }, [selectedAppId]);
+
   // Auto-scroll output drawer.
   useEffect(() => {
     if (outputOpen && outputRef.current) {
@@ -380,6 +395,7 @@ export function TestsPanel() {
       const appId = selectedAppId;
       const targetFiles = testFile ? [testFile] : specs.map((s) => s.file);
 
+      setLiveFrame(null);
       setRunState({
         appId,
         update: (prev) => ({
@@ -598,6 +614,21 @@ export function TestsPanel() {
           <span className="flex-1 whitespace-pre-wrap break-words">
             {runState.runError.message}
           </span>
+        </div>
+      )}
+
+      {/* Live screencast of the running test browser */}
+      {isRunning && liveFrame && (
+        <div className="border-b border-border bg-(--background-darkest) px-4 py-2">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1.5">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            Live preview
+          </div>
+          <img
+            src={liveFrame}
+            alt="Live preview of the running test"
+            className="w-full max-h-80 object-contain rounded-md border border-border bg-black"
+          />
         </div>
       )}
 

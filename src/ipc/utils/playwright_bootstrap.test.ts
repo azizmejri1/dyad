@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { transform } from "esbuild";
 import {
   buildCursorFixtures,
   buildPlaywrightConfig,
@@ -44,6 +45,27 @@ describe("buildCursorFixtures", () => {
     expect(source).toContain("addInitScript");
     expect(source).toContain("mousemove");
     expect(source).toContain("transition:left");
+  });
+
+  it("streams a live screencast to Dyad when stream env vars are set", () => {
+    const source = buildCursorFixtures();
+    expect(source).toContain("DYAD_TEST_STREAM_PORT");
+    expect(source).toContain("DYAD_TEST_STREAM_TOKEN");
+    expect(source).toContain("Page.startScreencast");
+    expect(source).toContain("Page.screencastFrameAck");
+    expect(source).toContain("net.connect");
+    // Handshake message the relay server authenticates against.
+    expect(source).toContain('type: "hello"');
+  });
+
+  it("produces a syntactically valid module (the file ships into apps)", async () => {
+    // A syntax error here would break every test run in a user's app, so guard
+    // it: esbuild throws on invalid TS/JS.
+    const out = await transform(buildCursorFixtures(), {
+      loader: "ts",
+      format: "esm",
+    });
+    expect(out.code).toContain("startScreencast");
   });
 });
 

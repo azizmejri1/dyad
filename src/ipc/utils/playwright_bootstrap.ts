@@ -126,23 +126,28 @@ export function detectSystemBrowserChannel(): BrowserChannel | null {
 }
 
 /**
- * Source for tests/dyad-fixtures.ts. Re-exports an extended `test` that injects
- * a visible, CSS-animated cursor into the page so recorded videos show the
- * pointer gliding between elements. Generated tests import { test, expect } from
- * "./dyad-fixtures" instead of "@playwright/test".
+ * Source for tests/dyad-fixtures.ts. Re-exports an extended `test` that:
+ *  1. Injects a visible, CSS-animated cursor into the page so recorded videos
+ *     (and the live stream) show the pointer gliding between elements. The dot
+ *     has a CSS transition, so even Playwright's single-step pointer moves on a
+ *     normal click/fill animate smoothly — no need to force mouse `steps`.
+ *  2. When Dyad provides DYAD_TEST_STREAM_PORT/TOKEN, opens a CDP screencast and
+ *     streams JPEG frames over a loopback socket to Dyad for live preview.
  *
- * The dot has a CSS transition, so even Playwright's single-step pointer moves
- * (on a normal click/fill) animate smoothly — no need to force mouse `steps`.
+ * Generated tests import { test, expect } from "./dyad-fixtures" instead of
+ * "@playwright/test". Both features are best-effort and never fail the test.
  */
 export function buildCursorFixtures(): string {
-  return `// ${DYAD_CONFIG_SENTINEL}. Injects a visible, CSS-animated cursor so the
-// recorded test video shows the pointer gliding between elements. Generated
-// tests import { test, expect } from "./dyad-fixtures" instead of
-// "@playwright/test" to pick this up automatically.
+  return `// ${DYAD_CONFIG_SENTINEL}. Injects a visible, CSS-animated cursor and
+// streams a live preview of the run back to Dyad. Generated tests import
+// { test, expect } from "./dyad-fixtures" instead of "@playwright/test" to pick
+// this up automatically.
+import net from "node:net";
 import { test as base, expect } from "@playwright/test";
 
 export const test = base.extend({
   page: async ({ page }, use) => {
+    // 1. Visible, CSS-animated cursor (runs in the browser).
     await page.addInitScript(() => {
       const id = "__dyad_cursor__";
       const ensure = () => {
@@ -156,8 +161,8 @@ export const test = base.extend({
           "transition:left .18s ease-out,top .18s ease-out;will-change:left,top;";
         document.body.appendChild(dot);
       };
-      const move = (event: MouseEvent) => {
-        const dot = document.getElementById(id) as HTMLElement | null;
+      const move = (event) => {
+        const dot = document.getElementById(id);
         if (!dot) {
           ensure();
           return;
@@ -172,7 +177,52 @@ export const test = base.extend({
       }
       window.addEventListener("mousemove", move, true);
     });
-    await use(page);
+
+    // 2. Live screencast back to Dyad (runs in Node, Chromium-only, best-effort).
+    const port = Number(process.env.DYAD_TEST_STREAM_PORT);
+    const token = process.env.DYAD_TEST_STREAM_TOKEN;
+    let socket = null;
+    let cdp = null;
+    if (port && token) {
+      try {
+        socket = net.connect(port, "127.0.0.1");
+        socket.on("error", () => {});
+        socket.write(JSON.stringify({ type: "hello", token }) + "\\n");
+        cdp = await page.context().newCDPSession(page);
+        cdp.on("Page.screencastFrame", async (frame) => {
+          try {
+            if (socket && !socket.destroyed) {
+              socket.write(
+                JSON.stringify({ type: "frame", data: frame.data }) + "\\n",
+              );
+            }
+            await cdp.send("Page.screencastFrameAck", {
+              sessionId: frame.sessionId,
+            });
+          } catch {}
+        });
+        await cdp.send("Page.startScreencast", {
+          format: "jpeg",
+          quality: 50,
+          maxWidth: 1280,
+          maxHeight: 720,
+          everyNthFrame: 1,
+        });
+      } catch {
+        // Streaming is optional — ignore (e.g. non-Chromium browser).
+      }
+    }
+
+    try {
+      await use(page);
+    } finally {
+      try {
+        if (cdp) await cdp.send("Page.stopScreencast");
+      } catch {}
+      try {
+        if (socket) socket.end();
+      } catch {}
+    }
   },
 });
 

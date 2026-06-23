@@ -141,10 +141,21 @@ export const TestOutputPayloadSchema = z.object({
 });
 export type TestOutputPayload = z.infer<typeof TestOutputPayloadSchema>;
 
+export const TestFramePayloadSchema = z.object({
+  appId: z.number(),
+  /** JPEG data URL of the latest live screencast frame from the test browser. */
+  dataUrl: z.string(),
+});
+export type TestFramePayload = z.infer<typeof TestFramePayloadSchema>;
+
 export const testsEvents = {
   output: defineEvent({
     channel: "tests:output",
     payload: TestOutputPayloadSchema,
+  }),
+  frame: defineEvent({
+    channel: "tests:frame",
+    payload: TestFramePayloadSchema,
   }),
 } as const;
 

@@ -19,6 +19,11 @@ import {
   TEST_RESULTS_JSON,
 } from "../utils/playwright_bootstrap";
 import { parsePlaywrightReport } from "../utils/playwright_report";
+import {
+  startTestStream,
+  stopTestStream,
+  type TestStreamHandle,
+} from "../utils/test_stream_server";
 import { sendTelemetryEvent } from "../utils/telemetry";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 
@@ -212,6 +217,15 @@ export function registerTestsHandlers() {
       const controller = new AbortController();
       testRunControllers.set(appId, controller);
 
+      // Live screencast relay (best-effort): the test process streams browser
+      // frames here, and we forward them to the renderer as `tests:frame`.
+      let stream: TestStreamHandle | null = null;
+      try {
+        stream = await startTestStream(appId, event.sender);
+      } catch (error) {
+        logger.warn(`Live test stream unavailable: ${error}`);
+      }
+
       try {
         // 1. Lazy bootstrap (install Playwright + browser, write config), streamed.
         let installed = false;
@@ -264,6 +278,13 @@ export function registerTestsHandlers() {
             PLAYWRIGHT_JSON_OUTPUT_NAME: TEST_RESULTS_JSON,
             // Non-interactive: never try to open/serve an HTML report.
             CI: "true",
+            // Live screencast relay coordinates (consumed by dyad-fixtures.ts).
+            ...(stream
+              ? {
+                  DYAD_TEST_STREAM_PORT: String(stream.port),
+                  DYAD_TEST_STREAM_TOKEN: stream.token,
+                }
+              : {}),
           },
           signal: controller.signal,
           onOutput: (chunk) => emitOutput(event, appId, chunk, "running"),
@@ -322,6 +343,9 @@ export function registerTestsHandlers() {
 
         return { appId, results };
       } finally {
+        if (stream) {
+          stopTestStream(stream.token);
+        }
         if (testRunControllers.get(appId) === controller) {
           testRunControllers.delete(appId);
         }
