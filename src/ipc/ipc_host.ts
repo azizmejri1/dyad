@@ -10,6 +10,7 @@ import { registerGithubBranchHandlers } from "./handlers/git_branch_handlers";
 import { registerVercelHandlers } from "./handlers/vercel_handlers";
 import { registerNodeHandlers } from "./handlers/node_handlers";
 import { registerProposalHandlers } from "./handlers/proposal_handlers";
+import { registerSuggestionsHandlers } from "./handlers/suggestions_handlers";
 import { registerDebugHandlers } from "./handlers/debug_handlers";
 import { registerSupabaseHandlers } from "./handlers/supabase_handlers";
 import { registerNeonHandlers } from "./handlers/neon_handlers";
@@ -66,6 +67,7 @@ export function registerIpcHandlers() {
   registerNodeHandlers();
   registerProblemsHandlers();
   registerProposalHandlers();
+  registerSuggestionsHandlers();
   registerDebugHandlers();
   registerSupabaseHandlers();
   registerNeonHandlers();

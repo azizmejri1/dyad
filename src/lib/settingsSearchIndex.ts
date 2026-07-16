@@ -45,6 +45,7 @@ export const SETTING_IDS = {
     "setting-enable-pnpm-minimum-release-age-warning",
   enableMcpToolSearch: "setting-enable-mcp-tool-search",
   enableCodeExplorer: "setting-enable-code-explorer",
+  enableNextStepSuggestions: "setting-enable-next-step-suggestions",
   enableSelectAppFromHomeChatInput:
     "setting-enable-select-app-from-home-chat-input",
   reset: "setting-reset",
@@ -471,6 +472,24 @@ export const SETTINGS_SEARCH_INDEX: SearchableSettingItem[] = [
     description:
       "When many MCP tools are enabled, let the agent search for the tools on demand instead of listing every tool in its context. Requires sandbox script execution",
     keywords: ["mcp", "search", "tools", "agent", "sandbox", "context"],
+    sectionId: SECTION_IDS.experiments,
+    sectionLabel: "Experiments",
+  },
+  {
+    id: SETTING_IDS.enableNextStepSuggestions,
+    label: "Enable next-step suggestions",
+    description:
+      "After the agent finishes a change, suggest relevant next features as pill buttons at the bottom of the chat. Clicking one fills the chat input with the full prompt",
+    keywords: [
+      "suggestions",
+      "next",
+      "step",
+      "ideas",
+      "pills",
+      "follow-up",
+      "recommendations",
+      "experiment",
+    ],
     sectionId: SECTION_IDS.experiments,
     sectionLabel: "Experiments",
   },

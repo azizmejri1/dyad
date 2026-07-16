@@ -96,6 +96,15 @@ export const queryKeys = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Next-Step Suggestions
+  // ─────────────────────────────────────────────────────────────────────────────
+  nextStepSuggestions: {
+    all: ["nextStepSuggestions"] as const,
+    detail: ({ chatId }: { chatId: number | undefined }) =>
+      ["nextStepSuggestions", chatId] as const,
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Git / Versions
   // ─────────────────────────────────────────────────────────────────────────────
   versions: {
@@ -426,6 +435,9 @@ export type AppQueryKey =
   | QueryKeyOf<(typeof queryKeys.chats)[keyof typeof queryKeys.chats]>
   | QueryKeyOf<(typeof queryKeys.plans)[keyof typeof queryKeys.plans]>
   | QueryKeyOf<(typeof queryKeys.proposals)[keyof typeof queryKeys.proposals]>
+  | QueryKeyOf<
+      (typeof queryKeys.nextStepSuggestions)[keyof typeof queryKeys.nextStepSuggestions]
+    >
   | QueryKeyOf<(typeof queryKeys.versions)[keyof typeof queryKeys.versions]>
   | QueryKeyOf<(typeof queryKeys.branches)[keyof typeof queryKeys.branches]>
   | QueryKeyOf<

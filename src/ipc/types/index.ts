@@ -42,6 +42,7 @@ export { languageModelContracts } from "./language-model";
 export { promptContracts } from "./prompts";
 export { templateContracts } from "./templates";
 export { proposalContracts } from "./proposals";
+export { suggestionsContracts } from "./suggestions";
 export { importContracts } from "./import";
 export { helpContracts, helpStreamContract } from "./help";
 export { capacitorContracts } from "./capacitor";
@@ -80,6 +81,7 @@ export { languageModelClient } from "./language-model";
 export { promptClient } from "./prompts";
 export { templateClient } from "./templates";
 export { proposalClient } from "./proposals";
+export { suggestionsClient } from "./suggestions";
 export { importClient } from "./import";
 export { helpClient, helpStreamClient } from "./help";
 export { capacitorClient } from "./capacitor";
@@ -304,6 +306,9 @@ export type {
 // Proposal types
 export type { ProposalResult, ApproveProposalResult } from "./proposals";
 
+// Suggestion types
+export type { NextStepSuggestion } from "./suggestions";
+
 // Import types
 export type { ImportAppParams, ImportAppResult } from "./import";
 
@@ -427,6 +432,7 @@ import { languageModelClient } from "./language-model";
 import { promptClient } from "./prompts";
 import { templateClient } from "./templates";
 import { proposalClient } from "./proposals";
+import { suggestionsClient } from "./suggestions";
 import { importClient } from "./import";
 import { helpClient, helpStreamClient } from "./help";
 import { capacitorClient } from "./capacitor";
@@ -492,6 +498,7 @@ export const ipc = {
   prompt: promptClient,
   template: templateClient,
   proposal: proposalClient,
+  suggestions: suggestionsClient,
   import: importClient,
   help: helpClient,
   capacitor: capacitorClient,

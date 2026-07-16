@@ -493,6 +493,11 @@ export function useStreamChat({
                 queryClient.invalidateQueries({
                   queryKey: queryKeys.proposals.detail({ chatId }),
                 });
+                // Regenerate experimental next-step suggestions after each
+                // completed turn.
+                queryClient.invalidateQueries({
+                  queryKey: queryKeys.nextStepSuggestions.detail({ chatId }),
+                });
                 if (!response.wasCancelled) {
                   // Re-fetch messages to pick up server-assigned fields (e.g. commitHash)
                   // that may only be finalized at stream completion.

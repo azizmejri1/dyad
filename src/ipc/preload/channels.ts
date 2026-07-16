@@ -31,6 +31,7 @@ import { languageModelContracts } from "../types/language-model";
 import { promptContracts } from "../types/prompts";
 import { templateContracts } from "../types/templates";
 import { proposalContracts } from "../types/proposals";
+import { suggestionsContracts } from "../types/suggestions";
 import { importContracts } from "../types/import";
 import { helpContracts, helpStreamContract } from "../types/help";
 import { capacitorContracts } from "../types/capacitor";
@@ -100,6 +101,7 @@ export const VALID_INVOKE_CHANNELS = [
   ...getInvokeChannels(promptContracts),
   ...getInvokeChannels(templateContracts),
   ...getInvokeChannels(proposalContracts),
+  ...getInvokeChannels(suggestionsContracts),
   ...getInvokeChannels(importContracts),
   ...getInvokeChannels(helpContracts),
   ...getInvokeChannels(capacitorContracts),

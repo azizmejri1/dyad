@@ -114,6 +114,7 @@ import { isDyadProEnabled } from "@/lib/schemas";
 import { useChatMode } from "@/hooks/useChatMode";
 import { useInitialChatMode } from "@/hooks/useInitialChatMode";
 import { useOpenPreviewIfSetupRequired } from "@/hooks/useOpenPreviewIfSetupRequired";
+import { NextStepSuggestions } from "./NextStepSuggestions";
 
 const showTokenBarAtom = atom(false);
 
@@ -799,6 +800,8 @@ export function ChatInput({ chatId }: { chatId?: number }) {
           {t("errorLoadingProposal", { message: proposalError.message })}
         </div>
       )}
+      {/* Experimental: AI-generated next-step suggestions as pill buttons */}
+      <NextStepSuggestions chatId={chatId} onSelect={setInputValue} />
       <div className="p-2 pt-0" data-testid="chat-input-container">
         {/* Promo cap row fused to the top of the composer */}
         {showPromo && <PromoMessage seed={promo.seed} />}

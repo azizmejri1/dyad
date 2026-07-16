@@ -334,6 +334,31 @@ export default function SettingsPage() {
                   with a compiler-backed code graph.
                 </div>
               </div>
+              <div
+                id={SETTING_IDS.enableNextStepSuggestions}
+                className="space-y-1 mt-4"
+              >
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="enable-next-step-suggestions"
+                    aria-label="Enable next-step suggestions"
+                    checked={!!settings?.enableNextStepSuggestions}
+                    onCheckedChange={(checked) => {
+                      updateSettings({
+                        enableNextStepSuggestions: checked,
+                      });
+                    }}
+                  />
+                  <Label htmlFor="enable-next-step-suggestions">
+                    Enable next-step suggestions
+                  </Label>
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  After the agent finishes a change, suggest relevant next
+                  features as pill buttons at the bottom of the chat. Clicking a
+                  suggestion fills the chat input with the full prompt.
+                </div>
+              </div>
             </div>
           </div>
 
