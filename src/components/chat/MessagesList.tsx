@@ -9,8 +9,11 @@ import { useStreamChat } from "@/hooks/useStreamChat";
 import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 import { questionnaireSubmittedChatIdsAtom } from "@/atoms/planAtoms";
 import { useAtomValue, useSetAtom } from "jotai";
-import { CheckCircle2, Loader2, RefreshCw, Undo } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw, Undo, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+// @ts-ignore
+import logo from "../../../assets/logo.svg";
+import { AiAccessBanner, SmartContextBanner } from "../ProBanner";
 import { useVersions } from "@/hooks/useVersions";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
 import { showError, showWarning } from "@/lib/toast";
@@ -18,6 +21,7 @@ import { ipc } from "@/ipc/types";
 import { chatMessagesByIdAtom } from "@/atoms/chatAtoms";
 import { useLanguageModelProviders } from "@/hooks/useLanguageModelProviders";
 import { useSettings } from "@/hooks/useSettings";
+import { hasDyadProKey } from "@/lib/schemas";
 import { ModifiedFilesCard } from "./ModifiedFilesCard";
 import { isCancelledResponseContent } from "@/shared/chatCancellation";
 
@@ -29,6 +33,49 @@ interface MessagesListProps {
 
 // Memoize ChatMessage at module level to prevent recreation on every render
 const MemoizedChatMessage = React.memo(ChatMessage);
+
+const EmptyChatState = forwardRef<
+  HTMLDivElement,
+  { settings: ReturnType<typeof useSettings>["settings"] }
+>(function EmptyChatState({ settings }, ref) {
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [selectedBanner] = useState<"ai" | "smart">(() => {
+    const options = ["ai", "smart"] as const;
+    return options[Math.floor(Math.random() * options.length)];
+  });
+
+  const showBanner =
+    !bannerDismissed && (!settings || !hasDyadProKey(settings));
+
+  return (
+    <div
+      className="absolute inset-0 overflow-y-auto p-4 pb-0 pr-0"
+      ref={ref}
+      data-testid="messages-list"
+    >
+      <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto gap-6">
+        <img src={logo} alt="Dyad" className="w-16 h-16" />
+        {showBanner && (
+          <div className="relative w-full">
+            <button
+              type="button"
+              onClick={() => setBannerDismissed(true)}
+              className="absolute -top-2 -right-2 z-20 rounded-full bg-background border border-border p-1 shadow-sm hover:bg-muted transition-colors cursor-pointer"
+              aria-label="Dismiss banner"
+            >
+              <X className="size-3.5" />
+            </button>
+            {selectedBanner === "ai" ? (
+              <AiAccessBanner />
+            ) : (
+              <SmartContextBanner />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
 
 // Context type for Virtuoso
 interface FooterContext {
@@ -414,17 +461,10 @@ export const MessagesList = forwardRef<HTMLDivElement, MessagesListProps>(
         );
       }
       return (
-        <div
-          className="absolute inset-0 overflow-y-auto p-4 pb-0 pr-0"
+        <EmptyChatState
           ref={ref}
-          data-testid="messages-list"
-        >
-          <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto">
-            <div className="flex flex-1 items-center justify-center text-gray-500">
-              No messages yet
-            </div>
-          </div>
-        </div>
+          settings={settings}
+        />
       );
     }
 
