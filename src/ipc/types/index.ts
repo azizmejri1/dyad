@@ -63,6 +63,7 @@ export { appBlueprintContracts, appBlueprintEvents } from "./app_blueprint";
 export { appCollectionContracts } from "./app_collections";
 export { terminalContracts } from "./terminal";
 export { testsContracts, testsEvents } from "./tests";
+export { previewViewContracts, previewViewEvents } from "./preview_view";
 export { userInputContracts, userInputEvents } from "./user_input";
 export { firstPromptSendContracts } from "./first_prompt";
 export {
@@ -115,6 +116,7 @@ export { appBlueprintClient, appBlueprintEventClient } from "./app_blueprint";
 export { appCollectionClient } from "./app_collections";
 export { terminalClient } from "./terminal";
 export { testsClient, testsEventClient } from "./tests";
+export { previewViewClient, previewViewEventClient } from "./preview_view";
 export { userInputClient, userInputEventClient } from "./user_input";
 export { firstPromptClient } from "./first_prompt";
 export {
@@ -393,6 +395,10 @@ export type {
   TestOutputPayload,
 } from "./tests";
 export type {
+  PreviewViewBounds,
+  PreviewViewEventPayload,
+} from "./preview_view";
+export type {
   UserInputDescriptorPayload,
   UserInputResponsePayload,
   PendingUserInputPayload,
@@ -477,6 +483,7 @@ import { appBlueprintClient, appBlueprintEventClient } from "./app_blueprint";
 import { appCollectionClient } from "./app_collections";
 import { terminalClient } from "./terminal";
 import { testsClient, testsEventClient } from "./tests";
+import { previewViewClient, previewViewEventClient } from "./preview_view";
 import { queueClient } from "./queue";
 import { userInputClient, userInputEventClient } from "./user_input";
 import { firstPromptClient } from "./first_prompt";
@@ -553,6 +560,7 @@ export const ipc = {
   appCollection: appCollectionClient,
   terminal: terminalClient,
   tests: testsClient,
+  previewView: previewViewClient,
   queue: queueClient,
   userInput: userInputClient,
   firstPrompt: firstPromptClient,
@@ -567,6 +575,7 @@ export const ipc = {
     misc: miscEventClient,
     appBlueprint: appBlueprintEventClient,
     tests: testsEventClient,
+    previewView: previewViewEventClient,
     userInput: userInputEventClient,
     windowInfrastructure: windowInfrastructureEventClient,
     distributedMachine: distributedMachineEventClient,

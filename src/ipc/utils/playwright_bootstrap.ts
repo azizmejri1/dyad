@@ -441,10 +441,18 @@ export async function ensurePlaywrightBootstrap({
   appPath,
   signal,
   onOutput,
+  skipBrowserSetup,
 }: {
   appPath: string;
   signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
+  /**
+   * Preview-panel mode: tests attach to the app preview already open in Dyad
+   * over CDP, so there is no browser to launch. Skips both the system-browser
+   * detection and the ~150MB bundled-Chromium download, and skips writing
+   * Dyad's launch-mode config (that mode uses its own generated config).
+   */
+  skipBrowserSetup?: boolean;
 }): Promise<{ installed: boolean }> {
   // Yarn Plug'n'Play has no node_modules, so the installed-check below and the
   // `npx playwright` runner can't work with it: every run would reinstall and
@@ -487,6 +495,15 @@ export async function ensurePlaywrightBootstrap({
         DyadErrorKind.External,
       );
     }
+  }
+
+  if (skipBrowserSetup) {
+    // Preview-panel mode drives an existing WebContentsView, so none of the
+    // browser/config plumbing below applies. The cheap app configuration still
+    // runs so the app looks the same in either mode.
+    appendGitignoreEntries(appPath);
+    ensureTestScript(appPath);
+    return { installed: !packageInstalled };
   }
 
   // Decide how tests get a browser: prefer the user's system Chrome/Edge (no

@@ -412,6 +412,15 @@ const BaseUserSettingsFields = {
   // preference. Default (unset) is headless + serial.
   testHeaded: z.boolean().optional(),
   testParallel: z.boolean().optional(),
+  // EXPERIMENT. Renders the preview panel in a native Electron
+  // `WebContentsView` instead of an `<iframe>`, and runs E2E tests inside that
+  // view (via CDP) instead of launching a separate Chromium window.
+  //
+  // Turning this on also makes Dyad start with Chromium's remote debugging
+  // server listening on an ephemeral localhost port, so anything else running
+  // as the same user can drive the app. Read at startup, before
+  // `app.whenReady()`, so a change only takes effect after a restart.
+  enablePreviewPanelE2E: z.boolean().optional(),
   autoExpandPreviewPanel: z.boolean().optional(),
   enableChatEventNotifications: z.boolean().optional(),
   blockUnsafeNpmPackages: z.boolean().optional(),

@@ -95,6 +95,8 @@ import {
   getUserDataPath,
 } from "./paths/paths";
 import { createDeepLinkQueue } from "./main/deep_link_queue";
+import { enablePreviewDebuggingPort } from "./main/preview_debugging";
+import { destroyAllPreviewViews } from "./main/preview_web_contents_view";
 import { registerDyadProtocolLinux } from "./main/linux_protocol_registration";
 import {
   applyManagedPnpmToProcessPath,
@@ -960,6 +962,14 @@ const createApplicationMenu = () => {
   Menu.setApplicationMenu(appMenu);
 };
 
+// EXPERIMENT (enablePreviewPanelE2E): opt into Chromium's remote debugging
+// server so a Playwright run can attach to the preview WebContentsView instead
+// of launching its own browser window. Chromium reads the switch during
+// startup, so this must run before app.whenReady() — which also means the flag
+// is read straight off disk (safeStorage isn't usable yet) and a toggle only
+// takes effect after a restart.
+enablePreviewDebuggingPort(getUserDataPath());
+
 // Register dyad-media:// protocol for serving persistent media attachments.
 // Must be called before app.whenReady().
 protocol.registerSchemesAsPrivileged([
@@ -1256,6 +1266,9 @@ const handleMcpBeforeQuit = createMcpBeforeQuitHandler({
 app.on("before-quit", (event) => {
   isAppQuitting = true;
   clearCrashSentinel();
+  // Preview views are children of the window, not of its web contents, so they
+  // outlive a renderer teardown unless we drop them explicitly.
+  destroyAllPreviewViews();
   handleMcpBeforeQuit(event);
 });
 

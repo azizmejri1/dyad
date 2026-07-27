@@ -319,6 +319,13 @@ export const TestsRunStatePayloadSchema = z.object({
   testLine: z.number().optional(),
   /** With testFile: regex passed to Playwright's --grep for a partial run. */
   grep: z.string().optional(),
+  /**
+   * EXPERIMENT (`enablePreviewPanelE2E`): the run drives the preview panel over
+   * CDP instead of launching a browser. Set on "started" so the renderer can
+   * bring the preview tab forward — the user watches the run there, and an
+   * off-screen view would be render-throttled by Chromium.
+   */
+  previewPanel: z.boolean().optional(),
   /** Present only on "finished". */
   results: z.array(TestResultSchema).optional(),
   infraError: z.object({ message: z.string() }).optional(),

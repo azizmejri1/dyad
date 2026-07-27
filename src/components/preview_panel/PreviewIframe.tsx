@@ -34,6 +34,7 @@ import {
 import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 import { CopyErrorMessage } from "@/components/CopyErrorMessage";
 import { ipc } from "@/ipc/types";
+import { PreviewWebContentsView } from "./PreviewWebContentsView";
 
 import { useParseRouter } from "@/hooks/useParseRouter";
 import {
@@ -344,6 +345,9 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
 
   // Device mode state
   const deviceMode: DeviceMode = settings?.previewDeviceMode ?? "desktop";
+  // EXPERIMENT: render the preview in a native WebContentsView so E2E runs can
+  // drive it over CDP. See rules/preview-panel-e2e.md for what this trades away.
+  const isPreviewViewExperimentOn = !!settings?.enablePreviewPanelE2E;
   const [isDevicePopoverOpen, setIsDevicePopoverOpen] = useState(false);
   const {
     mutateAsync: createCloudSandboxShareLink,
@@ -558,6 +562,64 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   useEffect(() => {
     setPreviewIframeRef(iframeRef.current);
   }, [iframeRef.current, setPreviewIframeRef]);
+
+  // EXPERIMENT (enablePreviewPanelE2E): a native WebContentsView has no
+  // `contentWindow`, so the load/error/console signals the iframe delivered via
+  // `onLoad` and `postMessage` arrive from the main process instead.
+  useEffect(() => {
+    if (!isPreviewViewExperimentOn || selectedAppId === null) return;
+    return ipc.events.previewView.onEvent((payload) => {
+      if (payload.appId !== selectedAppId) return;
+      if (payload.type === "loaded") {
+        onIframeLoaded();
+        return;
+      }
+      if (payload.type === "navigated") {
+        // `replaceState`, not `pushState`: this fires for the initial load and
+        // for the post-run restore too, so pushing would grow history with
+        // entries the user never navigated to. It keeps the address bar honest
+        // while leaving back/forward disabled — those postMessage to the
+        // iframe, which a native view does not have.
+        sendIframeEvent({
+          type: "NAVIGATED_IN_APP",
+          kind: "replaceState",
+          url: payload.url,
+        });
+        return;
+      }
+      if (payload.type === "failed") {
+        sendIframeEvent({
+          type: "IFRAME_ERROR",
+          message: `Failed to load ${payload.url}: ${payload.message}`,
+          source: "preview-app",
+        });
+        return;
+      }
+      if (payload.type === "console") {
+        const level =
+          payload.level === "error"
+            ? ("error" as const)
+            : payload.level === "warning"
+              ? ("warn" as const)
+              : ("info" as const);
+        const logEntry = boundPreviewConsoleEntry({
+          level,
+          type: "client" as const,
+          message: payload.message,
+          appId: selectedAppId,
+          timestamp: Date.now(),
+        });
+        ipc.misc.addLog(logEntry);
+        appRunManager.previewConsole.append(logEntry.appId, [logEntry]);
+      }
+    });
+  }, [
+    isPreviewViewExperimentOn,
+    selectedAppId,
+    onIframeLoaded,
+    sendIframeEvent,
+    appRunManager,
+  ]);
 
   // Send pro mode status to iframe
   useEffect(() => {
@@ -1534,24 +1596,46 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
               </div>
             ) : (
               <>
-                <iframe
-                  sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads"
-                  data-testid="preview-iframe-element"
-                  onLoad={() => {
-                    onIframeLoaded();
-                  }}
-                  ref={iframeRef}
-                  key={iframeState.iframeEpoch}
-                  title={`Preview for App ${selectedAppId}`}
-                  className="w-full h-full border-none bg-white dark:bg-gray-950"
-                  style={
-                    deviceMode == "desktop"
-                      ? {}
-                      : { width: `${deviceWidthConfig[deviceMode]}px` }
-                  }
-                  src={iframeSrc}
-                  allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture"
-                />
+                {isPreviewViewExperimentOn &&
+                selectedAppId !== null &&
+                iframeSrc ? (
+                  // EXPERIMENT (enablePreviewPanelE2E): a native WebContentsView
+                  // instead of the iframe, so E2E runs can attach to it over CDP
+                  // rather than launching their own Chromium window.
+                  <PreviewWebContentsView
+                    appId={selectedAppId}
+                    url={iframeSrc}
+                    // Renderer overlays can't paint over a native view, so park
+                    // it off-screen while the error banner owns the area.
+                    visible={!errorMessage}
+                    reloadToken={iframeState.iframeEpoch}
+                    className="w-full h-full bg-white dark:bg-gray-950"
+                    style={
+                      deviceMode == "desktop"
+                        ? {}
+                        : { width: `${deviceWidthConfig[deviceMode]}px` }
+                    }
+                  />
+                ) : (
+                  <iframe
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads"
+                    data-testid="preview-iframe-element"
+                    onLoad={() => {
+                      onIframeLoaded();
+                    }}
+                    ref={iframeRef}
+                    key={iframeState.iframeEpoch}
+                    title={`Preview for App ${selectedAppId}`}
+                    className="w-full h-full border-none bg-white dark:bg-gray-950"
+                    style={
+                      deviceMode == "desktop"
+                        ? {}
+                        : { width: `${deviceWidthConfig[deviceMode]}px` }
+                    }
+                    src={iframeSrc}
+                    allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture"
+                  />
+                )}
                 {/* Visual Editing Toolbar */}
                 {isProMode &&
                   visualEditingSelectedComponent &&

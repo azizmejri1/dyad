@@ -56,6 +56,7 @@ import {
 import { appCollectionContracts } from "../types/app_collections";
 import { terminalContracts } from "../types/terminal";
 import { testsContracts, testsEvents } from "../types/tests";
+import { previewViewContracts, previewViewEvents } from "../types/preview_view";
 import { queueContracts, queueSendContracts } from "../types/queue";
 import { userInputContracts, userInputEvents } from "../types/user_input";
 import { firstPromptSendContracts } from "../types/first_prompt";
@@ -132,6 +133,7 @@ export const VALID_INVOKE_CHANNELS = [
   ...getInvokeChannels(appCollectionContracts),
   ...getInvokeChannels(terminalContracts),
   ...getInvokeChannels(testsContracts),
+  ...getInvokeChannels(previewViewContracts),
   ...getInvokeChannels(queueContracts),
   ...getInvokeChannels(userInputContracts),
   ...getInvokeChannels(windowInfrastructureContracts),
@@ -175,6 +177,7 @@ export const VALID_RECEIVE_CHANNELS = [
   ...getReceiveChannels(planEvents),
   ...getReceiveChannels(appBlueprintEvents),
   ...getReceiveChannels(testsEvents),
+  ...getReceiveChannels(previewViewEvents),
   ...getReceiveChannels(userInputEvents),
   ...getReceiveChannels(windowInfrastructureEvents),
   ...getReceiveChannels(distributedMachineEvents),

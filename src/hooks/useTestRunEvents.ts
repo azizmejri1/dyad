@@ -10,6 +10,7 @@ import {
   setTestSpecsForAppAtom,
   type TestRunPhase,
 } from "@/atoms/testRuntimeAtoms";
+import { previewModeAtom } from "@/atoms/appAtoms";
 import { ipc } from "@/ipc/types";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -38,6 +39,7 @@ export function useTestRunEvents() {
   const clearOutput = useSetAtom(clearTestRunOutputForAppAtom);
   const setRunState = useSetAtom(setTestRunStateForAppAtom);
   const setSpecs = useSetAtom(setTestSpecsForAppAtom);
+  const setPreviewMode = useSetAtom(previewModeAtom);
   const queryClient = useQueryClient();
   const runGenerationByAppId = useRef(new Map<number, number>());
   const activeRunByAppId = useRef(
@@ -116,6 +118,13 @@ export function useTestRunEvents() {
           startedAt,
         });
         discardPendingOutput(appId);
+        // EXPERIMENT: a preview-panel run happens inside the preview view, so
+        // bring that tab forward. Besides letting the user watch, it keeps the
+        // view on screen — Chromium render-throttles an off-screen view, which
+        // stalls Playwright's actionability checks.
+        if (payload.previewPanel) {
+          setPreviewMode("preview");
+        }
         if (payload.source === "agent") {
           applyStarted({
             appId,
@@ -201,6 +210,7 @@ export function useTestRunEvents() {
     clearOutput,
     setRunState,
     setSpecs,
+    setPreviewMode,
     queryClient,
   ]);
 }

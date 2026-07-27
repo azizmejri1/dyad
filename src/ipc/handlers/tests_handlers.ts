@@ -41,6 +41,21 @@ import {
   TEST_RESULTS_JSON,
 } from "../utils/playwright_bootstrap";
 import {
+  ensurePreviewRunnerFiles,
+  PREVIEW_CONFIG_PATH,
+  PREVIEW_JSON_OUTPUT_NAME,
+} from "../utils/playwright_preview_bootstrap";
+import {
+  getPreviewCdpEndpoint,
+  isPreviewDebuggingEnabled,
+  PREVIEW_CDP_ENDPOINT_ENV,
+} from "@/main/preview_debugging";
+import {
+  getPreviewViewUrl,
+  navigatePreviewView,
+} from "@/main/preview_web_contents_view";
+import { getUserDataPath } from "@/paths/paths";
+import {
   parsePlaywrightReport,
   PLAYWRIGHT_REPORT_ERROR_FILE,
 } from "../utils/playwright_report";
@@ -167,6 +182,37 @@ export function getRunningTestBaseUrl(appId: number): string | null {
   return runningApps.get(appId)?.proxyUrl ?? null;
 }
 
+/**
+ * EXPERIMENT (`enablePreviewPanelE2E`): can this run drive the preview panel
+ * instead of launching a browser?
+ *
+ * Every condition has to hold, and each failure is a silent fall back to the
+ * normal launch mode — the experiment must never be the reason a run fails:
+ * - the experiment is on, and
+ * - this process actually started with the debugging port (the switch is
+ *   applied before `app.whenReady()`, so a mid-session toggle needs a restart),
+ *   and Chromium has published the port, and
+ * - a live preview view exists for the app and is showing the dev server, which
+ *   is what makes it addressable as a CDP page target.
+ */
+export function resolvePreviewRunEndpoint(
+  appId: number,
+  baseUrl: string,
+): string | null {
+  if (!readSettings().enablePreviewPanelE2E) return null;
+  if (!isPreviewDebuggingEnabled()) return null;
+
+  const previewUrl = getPreviewViewUrl(appId);
+  if (!previewUrl) return null;
+  try {
+    if (new URL(previewUrl).origin !== new URL(baseUrl).origin) return null;
+  } catch {
+    return null;
+  }
+
+  return getPreviewCdpEndpoint(getUserDataPath());
+}
+
 function emitOutput(
   event: IpcMainInvokeEvent,
   appId: number,
@@ -279,6 +325,17 @@ export async function runAppTestsCore({
     };
   }
 
+  // EXPERIMENT: when the preview panel can host the run, tests attach to the
+  // WebContentsView already showing the app instead of launching Chromium.
+  const previewCdpEndpoint = resolvePreviewRunEndpoint(appId, baseUrl);
+  const usePreviewPanel = previewCdpEndpoint !== null;
+  if (usePreviewPanel) {
+    emit(
+      "Running tests inside the preview panel (experimental) — no browser window will open.\n",
+      "setup",
+    );
+  }
+
   // 1. Lazy bootstrap (install Playwright + browser, write config), streamed.
   let installed = false;
   try {
@@ -286,6 +343,7 @@ export async function runAppTestsCore({
       appPath,
       signal,
       onOutput: (chunk) => emit(chunk, "setup"),
+      skipBrowserSetup: usePreviewPanel,
     });
     installed = result.installed;
   } catch (error) {
@@ -316,7 +374,18 @@ export async function runAppTestsCore({
   // hardcode a baseURL, or may point at a different testDir. Ours is the only
   // one that honors DYAD_TEST_BASE_URL, so it's passed explicitly rather than
   // Dyad taking over the canonical config name.
-  const args = ["playwright", "test", "--config", DYAD_CONFIG_FILENAME];
+  // In preview-panel mode the generated config lives in `.dyad-e2e/` and maps
+  // every spec's `@playwright/test` import at a fixture that hands back the
+  // preview page. Specs themselves are untouched.
+  if (usePreviewPanel) {
+    ensurePreviewRunnerFiles(appPath);
+  }
+  const args = [
+    "playwright",
+    "test",
+    "--config",
+    usePreviewPanel ? PREVIEW_CONFIG_PATH : DYAD_CONFIG_FILENAME,
+  ];
   if (normalizedTestFile) {
     const escapedFile = escapeRegExpForSelector(normalizedTestFile);
     const target =
@@ -341,15 +410,29 @@ export async function runAppTestsCore({
   // `playwright test` has no `--base-url` option.
   // `--headed` opens a visible browser window so the user can watch the run.
   // It overrides the headless default (and the CI=true env set below).
-  if (headed) {
+  // Meaningless in preview-panel mode: nothing is launched, and the run is
+  // already visible in the panel.
+  if (headed && !usePreviewPanel) {
     args.push("--headed");
   }
   // Override the generated config's serial defaults (`workers: 1`,
   // `fullyParallel: false`) so a file's independent tests run concurrently.
   // `--fully-parallel` is what parallelizes tests *within* a single file.
-  if (parallel) {
+  // Not available in preview-panel mode: there is exactly one preview view, so
+  // concurrent workers would fight over the same page.
+  if (parallel && !usePreviewPanel) {
     args.push("--fully-parallel", `--workers=${parallelWorkerCount()}`);
   }
+  if (parallel && usePreviewPanel) {
+    emit(
+      "Parallel mode is ignored in the preview panel: the single preview view runs tests serially.\n",
+      "setup",
+    );
+  }
+
+  // The run navigates the preview away from wherever the user left it, so
+  // remember the page to put back afterwards.
+  const previewUrlBeforeRun = usePreviewPanel ? getPreviewViewUrl(appId) : null;
 
   let run;
   try {
@@ -361,7 +444,15 @@ export async function runAppTestsCore({
         ...process.env,
         ...testEnv,
         [TEST_BASE_URL_ENV]: baseUrl,
-        PLAYWRIGHT_JSON_OUTPUT_NAME: TEST_RESULTS_JSON,
+        ...(previewCdpEndpoint
+          ? { [PREVIEW_CDP_ENDPOINT_ENV]: previewCdpEndpoint }
+          : {}),
+        // Playwright resolves this against the CONFIG's directory, so preview
+        // mode (config in `.dyad-e2e/`) has to step back out to land the report
+        // in the app's own test-results/ where both modes are read from.
+        PLAYWRIGHT_JSON_OUTPUT_NAME: usePreviewPanel
+          ? PREVIEW_JSON_OUTPUT_NAME
+          : TEST_RESULTS_JSON,
         // Non-interactive: never try to open/serve an HTML report.
         CI: "true",
       }),
@@ -376,6 +467,10 @@ export async function runAppTestsCore({
     const message = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to spawn the test runner: ${message}`);
     return { appId, results: [], infraError: { message } };
+  } finally {
+    if (previewUrlBeforeRun) {
+      navigatePreviewView(appId, previewUrlBeforeRun);
+    }
   }
 
   if (run.aborted) {
@@ -605,6 +700,7 @@ export async function runAppTestsWithIsolation({
     // prior run's `finally` emits its "finished" event during teardown, and
     // announcing this run first would let that stale "finished" flip the
     // panel back to idle while this run is still executing.
+    const baseUrlForPreview = getRunningTestBaseUrl(appId);
     emitRunState(event, {
       appId,
       source,
@@ -612,6 +708,9 @@ export async function runAppTestsWithIsolation({
       testFile: normalizedTestFile ?? undefined,
       testLine,
       grep,
+      previewPanel: baseUrlForPreview
+        ? resolvePreviewRunEndpoint(appId, baseUrlForPreview) !== null
+        : false,
     });
 
     // Hold the per-app lock across the whole isolation lifecycle (prepare →
