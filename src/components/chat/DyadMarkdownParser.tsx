@@ -62,6 +62,7 @@ import { DyadExitPlan } from "./DyadExitPlan";
 import { DyadQuestionnaire } from "./DyadQuestionnaire";
 import { DyadStepLimit } from "./DyadStepLimit";
 import { DyadAppBlueprintCard } from "./DyadAppBlueprintCard";
+import { DyadTestAssertionsCard } from "./DyadTestAssertionsCard";
 import { DyadReadGuide } from "./DyadReadGuide";
 import { DyadScript } from "./DyadScript";
 import { DyadGit } from "./DyadGit";
@@ -1198,6 +1199,22 @@ function renderCustomTag(
             },
           }}
         />
+      );
+
+    case "dyad-test-assertions":
+      return (
+        <DyadTestAssertionsCard
+          node={{
+            properties: {
+              "proposal-id": attributes["proposal-id"] || "",
+              status: attributes.status || "proposed",
+              "spec-path": attributes["spec-path"] || "",
+              state: getState({ isStreaming, inProgress }),
+            },
+          }}
+        >
+          {content}
+        </DyadTestAssertionsCard>
       );
 
     default:
