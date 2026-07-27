@@ -104,7 +104,30 @@ therefore actively wrong here and are set to `"off"` in the generated config:
 When adding anything else that operates on `context` rather than `page`, assume
 it sees Dyad's window too.
 
+## Diagnosing "it did nothing"
+
+The two failure reports look identical from the outside — blank preview, browser
+window still opens — so both paths now say why:
+
+- **Settings** shows whether the experiment is actually operative in this
+  process (`preview-view:status`), not just switched on. Enabling the setting
+  does nothing until a restart, because the remote-debugging switch is applied
+  before `app.whenReady()`.
+- **A test run** that falls back prints `Reason: …` into the run output naming
+  the missing precondition (port closed, no preview view open, preview on a
+  different origin, port not published).
+
+Keep both. A silent fallback here is indistinguishable from a broken feature.
+
 ## Gotchas found while building it
+
+- **The panel remounts more often than you think.** `PreviewPanel` keys
+  `PreviewIframe` on the reload token, so every reload tears down and rebuilds
+  `PreviewWebContentsView`. The unmount's park and the remount's show travel on
+  different IPC channels with no ordering guarantee — if the park lands last,
+  the view sits at its off-screen coordinates forever and the panel looks blank
+  for the rest of the session. Parks are deferred by a macrotask so a remount in
+  the same tick cancels them (`pendingParks`).
 
 - **Playwright resolves reporter output and `outputDir` against the config's
   directory, not the cwd.** In the launch mode the config sits at the app root

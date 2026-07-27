@@ -15,6 +15,33 @@ import type { PreviewViewBounds } from "@/ipc/types";
  * would cross into the preview area are hidden behind it. Callers pass
  * `visible: false` to park the view off-screen while such an overlay is up.
  */
+
+/**
+ * Parks scheduled by an unmount, keyed by app, so a remount can cancel one.
+ *
+ * `PreviewPanel` keys `PreviewIframe` on the reload token, so every reload
+ * tears this component down and immediately builds a new one. The unmount's
+ * "park" and the remount's "show" travel on different IPC channels with no
+ * ordering guarantee between them — if the park arrives last the view stays at
+ * its off-screen coordinates and the panel looks permanently blank. Deferring
+ * the park by a macrotask lets the remount (same tick) cancel it, while a real
+ * tab switch, which has no remount, still parks.
+ */
+const pendingParks = new Map<number, ReturnType<typeof setTimeout>>();
+
+function cancelPendingPark(appId: number): void {
+  const timer = pendingParks.get(appId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    pendingParks.delete(appId);
+  }
+}
+
+/** Exported for tests: drop any scheduled park without running it. */
+export function resetPendingPreviewParksForTests(): void {
+  for (const timer of pendingParks.values()) clearTimeout(timer);
+  pendingParks.clear();
+}
 export function PreviewWebContentsView({
   appId,
   url,
@@ -122,13 +149,24 @@ export function PreviewWebContentsView({
   // painted over whatever replaces the panel. It is parked, not destroyed:
   // this component unmounts on every tab switch, and destroying here would
   // reload the app each time and delete the CDP target a test run attaches to.
+  //
+  // Mounting cancels a park left behind by a reload-token remount (see
+  // `pendingParks`), so the view is not parked out from under its replacement.
   useEffect(() => {
+    cancelPendingPark(appId);
     return () => {
-      void ipc.previewView
-        .setPreviewViewVisible({ appId, visible: false })
-        .catch(() => {
-          // The window may already be gone; nothing to park.
-        });
+      cancelPendingPark(appId);
+      pendingParks.set(
+        appId,
+        setTimeout(() => {
+          pendingParks.delete(appId);
+          void ipc.previewView
+            .setPreviewViewVisible({ appId, visible: false })
+            .catch(() => {
+              // The window may already be gone; nothing to park.
+            });
+        }, 0),
+      );
     };
   }, [appId]);
 

@@ -86,7 +86,28 @@ export type PreviewViewEventPayload = z.infer<
 // Contracts
 // =============================================================================
 
+/**
+ * Whether the experiment is actually operative in THIS process, as opposed to
+ * merely switched on in settings. The remote-debugging switch is applied before
+ * `app.whenReady()`, so enabling the setting does nothing until a restart — and
+ * without a readout the only symptom is a browser window appearing anyway.
+ */
+export const PreviewViewStatusSchema = z.object({
+  /** The `enablePreviewPanelE2E` setting, as main reads it. */
+  experimentEnabled: z.boolean(),
+  /** True when this process started with the debugging port open. */
+  debuggingPortOpen: z.boolean(),
+  /** Set once Chromium has published the port it bound. */
+  cdpEndpoint: z.string().nullable(),
+});
+export type PreviewViewStatus = z.infer<typeof PreviewViewStatusSchema>;
+
 export const previewViewContracts = {
+  getPreviewViewStatus: defineContract({
+    channel: "preview-view:status",
+    input: z.object({}),
+    output: PreviewViewStatusSchema,
+  }),
   syncPreviewView: defineContract({
     channel: "preview-view:sync",
     input: SyncPreviewViewParamsSchema,

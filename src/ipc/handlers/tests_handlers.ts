@@ -183,34 +183,78 @@ export function getRunningTestBaseUrl(appId: number): string | null {
 }
 
 /**
- * EXPERIMENT (`enablePreviewPanelE2E`): can this run drive the preview panel
- * instead of launching a browser?
+ * EXPERIMENT (`enablePreviewPanelE2E`): whether this run can drive the preview
+ * panel instead of launching a browser, and if not, why not.
  *
- * Every condition has to hold, and each failure is a silent fall back to the
- * normal launch mode — the experiment must never be the reason a run fails:
- * - the experiment is on, and
- * - this process actually started with the debugging port (the switch is
- *   applied before `app.whenReady()`, so a mid-session toggle needs a restart),
- *   and Chromium has published the port, and
- * - a live preview view exists for the app and is showing the dev server, which
- *   is what makes it addressable as a CDP page target.
+ * Falling back to the launch mode is always safe — the experiment must never be
+ * the reason a run fails — but it must never be *silent*: an unexplained
+ * Chromium window is exactly the symptom that makes this look broken. Callers
+ * surface `reason` in the run output whenever the experiment is on.
  */
-export function resolvePreviewRunEndpoint(
+export type PreviewRunTarget =
+  | { available: true; cdpEndpoint: string }
+  | { available: false; experimentEnabled: boolean; reason: string };
+
+export function resolvePreviewRunTarget(
   appId: number,
   baseUrl: string,
-): string | null {
-  if (!readSettings().enablePreviewPanelE2E) return null;
-  if (!isPreviewDebuggingEnabled()) return null;
-
-  const previewUrl = getPreviewViewUrl(appId);
-  if (!previewUrl) return null;
-  try {
-    if (new URL(previewUrl).origin !== new URL(baseUrl).origin) return null;
-  } catch {
-    return null;
+): PreviewRunTarget {
+  if (!readSettings().enablePreviewPanelE2E) {
+    return {
+      available: false,
+      experimentEnabled: false,
+      reason: "The preview-panel testing experiment is off.",
+    };
+  }
+  // The remote-debugging switch is applied before `app.whenReady()`, so turning
+  // the setting on mid-session leaves the port closed until a restart.
+  if (!isPreviewDebuggingEnabled()) {
+    return {
+      available: false,
+      experimentEnabled: true,
+      reason:
+        "Dyad started before the experiment was enabled, so its debugging port is closed. Restart Dyad and run the tests again.",
+    };
   }
 
-  return getPreviewCdpEndpoint(getUserDataPath());
+  const previewUrl = getPreviewViewUrl(appId);
+  if (!previewUrl) {
+    return {
+      available: false,
+      experimentEnabled: true,
+      reason:
+        "No preview view is open for this app. Open the Preview tab with the app running, then run the tests again.",
+    };
+  }
+  try {
+    const previewOrigin = new URL(previewUrl).origin;
+    const baseOrigin = new URL(baseUrl).origin;
+    if (previewOrigin !== baseOrigin) {
+      return {
+        available: false,
+        experimentEnabled: true,
+        reason: `The preview is showing ${previewOrigin} instead of the app's dev server (${baseOrigin}).`,
+      };
+    }
+  } catch {
+    return {
+      available: false,
+      experimentEnabled: true,
+      reason: `The preview is not on a testable page (${previewUrl}).`,
+    };
+  }
+
+  const cdpEndpoint = getPreviewCdpEndpoint(getUserDataPath());
+  if (!cdpEndpoint) {
+    return {
+      available: false,
+      experimentEnabled: true,
+      reason:
+        "Chromium has not published a debugging port for this session. Restart Dyad and run the tests again.",
+    };
+  }
+
+  return { available: true, cdpEndpoint };
 }
 
 function emitOutput(
@@ -327,13 +371,22 @@ export async function runAppTestsCore({
 
   // EXPERIMENT: when the preview panel can host the run, tests attach to the
   // WebContentsView already showing the app instead of launching Chromium.
-  const previewCdpEndpoint = resolvePreviewRunEndpoint(appId, baseUrl);
-  const usePreviewPanel = previewCdpEndpoint !== null;
-  if (usePreviewPanel) {
+  const previewTarget = resolvePreviewRunTarget(appId, baseUrl);
+  const usePreviewPanel = previewTarget.available;
+  const previewCdpEndpoint = previewTarget.available
+    ? previewTarget.cdpEndpoint
+    : null;
+  if (previewTarget.available) {
     emit(
       "Running tests inside the preview panel (experimental) — no browser window will open.\n",
       "setup",
     );
+  } else if (previewTarget.experimentEnabled) {
+    // Never let the fallback be silent: an unexplained browser window is the
+    // whole reason this mode looks broken when a precondition is missing.
+    const message = `Preview-panel testing is enabled but unavailable for this run, so a browser window will open instead.\nReason: ${previewTarget.reason}\n`;
+    logger.warn(message);
+    emit(message, "setup");
   }
 
   // 1. Lazy bootstrap (install Playwright + browser, write config), streamed.
@@ -709,7 +762,7 @@ export async function runAppTestsWithIsolation({
       testLine,
       grep,
       previewPanel: baseUrlForPreview
-        ? resolvePreviewRunEndpoint(appId, baseUrlForPreview) !== null
+        ? resolvePreviewRunTarget(appId, baseUrlForPreview).available
         : false,
     });
 

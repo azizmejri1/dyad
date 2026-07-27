@@ -149,6 +149,10 @@ export const queryKeys = {
   // ─────────────────────────────────────────────────────────────────────────────
   // Tests
   // ─────────────────────────────────────────────────────────────────────────────
+  previewView: {
+    all: ["previewView"] as const,
+    status: ["previewView", "status"] as const,
+  },
   tests: {
     all: ["tests"] as const,
     list: ({ appId }: { appId: number | null }) =>

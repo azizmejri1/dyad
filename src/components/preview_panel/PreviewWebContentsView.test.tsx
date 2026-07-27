@@ -31,12 +31,18 @@ vi.mock("@/ipc/types", () => ({
   },
 }));
 
-import { PreviewWebContentsView } from "./PreviewWebContentsView";
+import {
+  PreviewWebContentsView,
+  resetPendingPreviewParksForTests,
+} from "./PreviewWebContentsView";
+
+const flushParks = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 beforeEach(() => {
   mocks.syncPreviewView.mockClear();
   mocks.setPreviewViewVisible.mockClear();
   mocks.releasePreviewView.mockClear();
+  resetPendingPreviewParksForTests();
 });
 
 describe("PreviewWebContentsView", () => {
@@ -103,6 +109,7 @@ describe("PreviewWebContentsView", () => {
     await waitFor(() => expect(mocks.syncPreviewView).toHaveBeenCalled());
 
     unmount();
+    await flushParks();
 
     await waitFor(() =>
       expect(mocks.setPreviewViewVisible).toHaveBeenCalledWith({
@@ -111,5 +118,33 @@ describe("PreviewWebContentsView", () => {
       }),
     );
     expect(mocks.releasePreviewView).not.toHaveBeenCalled();
+  });
+
+  it("does not park the view when a reload remounts it", async () => {
+    // PreviewPanel keys PreviewIframe on the reload token, so every reload
+    // unmounts this component and immediately mounts a new one. The park and
+    // the re-show travel on different IPC channels with no ordering guarantee;
+    // if the park won, the view stayed off-screen and the panel looked blank
+    // for the rest of the session.
+    const first = render(
+      <PreviewWebContentsView
+        appId={7}
+        url="http://localhost:32100/"
+        visible
+      />,
+    );
+    await waitFor(() => expect(mocks.syncPreviewView).toHaveBeenCalled());
+
+    first.unmount();
+    render(
+      <PreviewWebContentsView
+        appId={7}
+        url="http://localhost:32100/"
+        visible
+      />,
+    );
+    await flushParks();
+
+    expect(mocks.setPreviewViewVisible).not.toHaveBeenCalled();
   });
 });

@@ -33,7 +33,7 @@ vi.mock("@/paths/paths", () => ({
   getDyadAppPath: (p: string) => p,
 }));
 
-import { resolvePreviewRunEndpoint } from "./tests_handlers";
+import { resolvePreviewRunTarget } from "./tests_handlers";
 
 const BASE_URL = "http://localhost:32100";
 
@@ -44,53 +44,70 @@ beforeEach(() => {
   mocks.cdpEndpoint = "http://127.0.0.1:42031";
 });
 
-describe("resolvePreviewRunEndpoint", () => {
+describe("resolvePreviewRunTarget", () => {
   it("selects preview-panel mode when everything lines up", () => {
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBe(
-      "http://127.0.0.1:42031",
-    );
-  });
-
-  // Each of these falls back to the normal launch mode. The experiment must
-  // never be the reason a test run fails.
-  it("falls back when the experiment is off", () => {
-    mocks.settings = { enablePreviewPanelE2E: false };
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
-  });
-
-  it("falls back when the process started without the debugging port", () => {
-    // The switch is applied before app.whenReady(), so a mid-session toggle
-    // leaves the setting on while the port is closed.
-    mocks.debuggingEnabled = false;
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
-  });
-
-  it("falls back when no preview view is live for the app", () => {
-    mocks.previewUrl = null;
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
-  });
-
-  it("falls back when the preview is showing a different origin", () => {
-    // e.g. the user navigated the preview to an external site; that page is
-    // not the app under test.
-    mocks.previewUrl = "https://example.com/";
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
-  });
-
-  it("falls back when the preview URL is not parseable", () => {
-    mocks.previewUrl = "about:blank";
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
-  });
-
-  it("falls back when Chromium has not published a port yet", () => {
-    mocks.cdpEndpoint = null;
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBeNull();
+    expect(resolvePreviewRunTarget(1, BASE_URL)).toEqual({
+      available: true,
+      cdpEndpoint: "http://127.0.0.1:42031",
+    });
   });
 
   it("matches on origin, not exact URL", () => {
     mocks.previewUrl = `${BASE_URL}/deep/route?q=1`;
-    expect(resolvePreviewRunEndpoint(1, BASE_URL)).toBe(
-      "http://127.0.0.1:42031",
+    expect(resolvePreviewRunTarget(1, BASE_URL).available).toBe(true);
+  });
+
+  // Every fallback below is safe, but must never be silent: an unexplained
+  // Chromium window is the symptom that makes this mode look broken.
+  it("says nothing when the experiment is off", () => {
+    mocks.settings = { enablePreviewPanelE2E: false };
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({
+      available: false,
+      experimentEnabled: false,
+    });
+  });
+
+  it("explains that a mid-session toggle needs a restart", () => {
+    // The debugging switch is applied before app.whenReady(), so enabling the
+    // setting leaves the port closed until Dyad restarts.
+    mocks.debuggingEnabled = false;
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({ available: false, experimentEnabled: true });
+    expect(target).toHaveProperty("reason", expect.stringContaining("Restart"));
+  });
+
+  it("explains that no preview view is open", () => {
+    mocks.previewUrl = null;
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({ available: false, experimentEnabled: true });
+    expect(target).toHaveProperty(
+      "reason",
+      expect.stringContaining("Preview tab"),
     );
+  });
+
+  it("explains an origin mismatch, naming both origins", () => {
+    mocks.previewUrl = "https://example.com/";
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({ available: false, experimentEnabled: true });
+    expect(target).toHaveProperty(
+      "reason",
+      expect.stringContaining("https://example.com"),
+    );
+    expect(target).toHaveProperty("reason", expect.stringContaining(BASE_URL));
+  });
+
+  it("explains an unparseable preview URL", () => {
+    mocks.previewUrl = "about:blank";
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({ available: false, experimentEnabled: true });
+  });
+
+  it("explains a missing published port", () => {
+    mocks.cdpEndpoint = null;
+    const target = resolvePreviewRunTarget(1, BASE_URL);
+    expect(target).toMatchObject({ available: false, experimentEnabled: true });
+    expect(target).toHaveProperty("reason", expect.stringContaining("Restart"));
   });
 });

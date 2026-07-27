@@ -7,11 +7,28 @@ import {
   syncPreviewView,
 } from "@/main/preview_web_contents_view";
 import { readSettings } from "@/main/settings";
+import {
+  getPreviewCdpEndpoint,
+  isPreviewDebuggingEnabled,
+} from "@/main/preview_debugging";
+import { getUserDataPath } from "@/paths/paths";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 
 const logger = log.scope("preview_view_handlers");
 
 export function registerPreviewViewHandlers() {
+  createTypedHandler(previewViewContracts.getPreviewViewStatus, async () => {
+    const experimentEnabled = !!readSettings().enablePreviewPanelE2E;
+    const debuggingPortOpen = isPreviewDebuggingEnabled();
+    return {
+      experimentEnabled,
+      debuggingPortOpen,
+      cdpEndpoint: debuggingPortOpen
+        ? getPreviewCdpEndpoint(getUserDataPath())
+        : null,
+    };
+  });
+
   createTypedHandler(
     previewViewContracts.syncPreviewView,
     async (event, params) => {
