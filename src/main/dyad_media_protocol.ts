@@ -6,6 +6,7 @@ import {
   DYAD_INTERNAL_DIR_NAME,
   DYAD_MEDIA_SUBDIR,
   DYAD_SCREENSHOT_SUBDIR,
+  DYAD_TEST_SCREENSHOT_SUBDIR,
 } from "../ipc/utils/media_path_utils";
 import {
   createMediaThumbnailService,
@@ -104,7 +105,11 @@ export function createDyadMediaProtocolHandler({
       // dyad-media://media/{app-path}/.dyad/{subdir}/{filename}
       // dyad-media://media/app-id/{id}/.dyad/{subdir}/{filename}
       const pathSegments = url.pathname.slice(1).split("/");
-      const allowedSubdirs = [DYAD_MEDIA_SUBDIR, DYAD_SCREENSHOT_SUBDIR];
+      const allowedSubdirs = [
+        DYAD_MEDIA_SUBDIR,
+        DYAD_SCREENSHOT_SUBDIR,
+        DYAD_TEST_SCREENSHOT_SUBDIR,
+      ];
       const usesAppId =
         pathSegments.length === 5 &&
         pathSegments[0] === "app-id" &&

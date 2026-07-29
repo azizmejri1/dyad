@@ -39,6 +39,7 @@ import {
   DYAD_CONFIG_FILENAME,
   TEST_BASE_URL_ENV,
   TEST_RESULTS_JSON,
+  type ScreenshotMode,
 } from "../utils/playwright_bootstrap";
 import {
   parsePlaywrightReport,
@@ -233,6 +234,16 @@ export interface RunAppTestsCoreOptions {
 }
 
 /**
+ * `use.screenshot` for this run, from the user's before/after UI screenshots
+ * setting. Off (the default) keeps Playwright's failure-only capture, which is
+ * what guarantees no screenshots are taken while the setting is off — including
+ * for apps that have E2E testing enabled.
+ */
+export function screenshotModeFromSettings(): ScreenshotMode {
+  return readSettings().enableUiChangeScreenshots ? "on" : "only-on-failure";
+}
+
+/**
  * Bootstrap Playwright (if needed), run the tests against the running dev
  * server's proxy URL, and parse the JSON report. Backs the `tests:run` IPC
  * handler (the UI "Run" button).
@@ -286,6 +297,7 @@ export async function runAppTestsCore({
       appPath,
       signal,
       onOutput: (chunk) => emit(chunk, "setup"),
+      screenshotMode: screenshotModeFromSettings(),
     });
     installed = result.installed;
   } catch (error) {

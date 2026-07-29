@@ -11,6 +11,7 @@ import {
   buildDyadMediaUrlForApp,
   buildDyadMediaThumbnailUrl,
   buildDyadMediaUrl,
+  buildDyadTestScreenshotUrlForApp,
 } from "../lib/dyadMediaUrl";
 import {
   createPlatformThumbnailFromPath,
@@ -139,6 +140,49 @@ describe("dyad-media thumbnail protocol", () => {
     expect(result.status).toBe(200);
     expect(await result.text()).toBe("original");
     expect(fetchFile).toHaveBeenCalledWith(pathToFileURL(realSourcePath).href);
+    expect(createThumbnailFromPath).not.toHaveBeenCalled();
+  });
+
+  it("serves UI screenshots from the test-screenshot directory", async () => {
+    const shotDir = path.join(appPath, ".dyad", "test-screenshot");
+    await fs.mkdir(shotDir, { recursive: true });
+    const sourcePath = path.join(shotDir, "ui-1-2-1-before.png");
+    await fs.writeFile(sourcePath, pngData);
+    const realSourcePath = await fs.realpath(sourcePath);
+    const { handler, fetchFile } = makeHandler();
+
+    await expect(
+      handler(
+        new Request(buildDyadTestScreenshotUrlForApp(7, "ui-1-2-1-before.png")),
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+    expect(fetchFile).toHaveBeenCalledWith(pathToFileURL(realSourcePath).href);
+  });
+
+  it("refuses a UI screenshot path that escapes the app directory", async () => {
+    const outside = path.join(root, "outside.png");
+    await fs.writeFile(outside, pngData);
+    const shotDir = path.join(appPath, ".dyad", "test-screenshot");
+    await fs.mkdir(shotDir, { recursive: true });
+    await fs.symlink(outside, path.join(shotDir, "ui-1-2-1-after.png"));
+    const { handler, fetchFile } = makeHandler();
+
+    const result = await handler(
+      new Request(buildDyadTestScreenshotUrlForApp(7, "ui-1-2-1-after.png")),
+    );
+
+    expect(result.status).toBe(403);
+    expect(fetchFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses thumbnails of UI screenshots", async () => {
+    const shotDir = path.join(appPath, ".dyad", "test-screenshot");
+    await fs.mkdir(shotDir, { recursive: true });
+    await fs.writeFile(path.join(shotDir, "ui-1-2-1-after.png"), pngData);
+    const { handler, createThumbnailFromPath } = makeHandler();
+    const url = `${buildDyadTestScreenshotUrlForApp(7, "ui-1-2-1-after.png")}?thumbnail=1`;
+
+    expect((await handler(new Request(url))).status).toBe(403);
     expect(createThumbnailFromPath).not.toHaveBeenCalled();
   });
 

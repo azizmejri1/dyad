@@ -151,6 +151,7 @@ function reduceSpec(spec: PwSpec): TestCaseResult | null {
   let sawResult = false;
   let error: string | undefined;
   let screenshotPath: string | undefined;
+  let finalScreenshotPath: string | undefined;
 
   for (const test of spec.tests ?? []) {
     const results = test.results ?? [];
@@ -158,6 +159,12 @@ function reduceSpec(spec: PwSpec): TestCaseResult | null {
     if (!final) continue;
     sawResult = true;
     durationMs += final.duration ?? 0;
+
+    // Captured for every outcome, unlike `screenshotPath` below, which stays
+    // failure-only so the fix loop and the Tests panel keep showing exactly
+    // what they show today. With `screenshot: "on"` this is the UI at the end
+    // of the test; with the default config it is only ever set on failure.
+    if (!finalScreenshotPath) finalScreenshotPath = screenshotFromResult(final);
 
     // Trust Playwright's annotation-aware verdict first: a `test.fail()` spec
     // that failed as expected reports raw status "failed" but test-level
@@ -232,6 +239,7 @@ function reduceSpec(spec: PwSpec): TestCaseResult | null {
     durationMs: durationMs || undefined,
     error,
     screenshotPath,
+    finalScreenshotPath,
   };
 }
 
@@ -249,11 +257,15 @@ export function aggregateTestResults(
   let hasAssertion = false;
   let error: string | undefined;
   let screenshotPath: string | undefined;
+  let finalScreenshotPath: string | undefined;
 
   for (const t of tests) {
     durationMs += t.durationMs ?? 0;
     if (t.status === "failed") hasAssertion = true;
     else if (t.status === "inconclusive") hasInfra = true;
+    if (!finalScreenshotPath && t.finalScreenshotPath) {
+      finalScreenshotPath = t.finalScreenshotPath;
+    }
     if (t.status !== "passed") {
       if (!error && t.error) error = t.error;
       if (!screenshotPath && t.screenshotPath) {
@@ -277,6 +289,7 @@ export function aggregateTestResults(
     durationMs: durationMs || undefined,
     error,
     screenshotPath,
+    finalScreenshotPath,
     tests,
   };
 }

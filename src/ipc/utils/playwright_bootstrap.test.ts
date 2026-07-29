@@ -80,6 +80,16 @@ describe("buildPlaywrightConfig", () => {
     // baseURL points at the running proxy, never a webServer config block.
     expect(config).not.toContain("webServer:");
   });
+
+  it("captures screenshots only on failure by default", () => {
+    expect(buildPlaywrightConfig(null)).toContain(
+      'screenshot: "only-on-failure"',
+    );
+  });
+
+  it("captures a screenshot on every test when asked", () => {
+    expect(buildPlaywrightConfig(null, "on")).toContain('screenshot: "on"');
+  });
 });
 
 describe("ensurePlaywrightBootstrap", () => {
@@ -129,6 +139,53 @@ describe("ensurePlaywrightBootstrap", () => {
     const updated = fs.readFileSync(configPath, "utf8");
     expect(updated).toContain('testDir: "./e2e-tests"');
     expect(updated).not.toContain('testDir: "./tests"');
+  });
+
+  it("upgrades an existing Dyad config to capture every screenshot", async () => {
+    const { appPath } = makeAppWithBrowserMarker({
+      packageVersion: "1.2.3",
+      executableExists: true,
+    });
+    const configPath = path.join(appPath, DYAD_CONFIG_FILENAME);
+    fs.writeFileSync(configPath, buildPlaywrightConfig("chrome"));
+
+    await ensurePlaywrightBootstrap({ appPath, screenshotMode: "on" });
+
+    const updated = fs.readFileSync(configPath, "utf8");
+    expect(updated).toContain('screenshot: "on"');
+    // The one line changes; the config's existing channel survives.
+    expect(updated).toContain('channel: "chrome"');
+  });
+
+  it("returns an upgraded config to failure-only when the setting is off", async () => {
+    const { appPath } = makeAppWithBrowserMarker({
+      packageVersion: "1.2.3",
+      executableExists: true,
+    });
+    const configPath = path.join(appPath, DYAD_CONFIG_FILENAME);
+    fs.writeFileSync(configPath, buildPlaywrightConfig(null, "on"));
+
+    await ensurePlaywrightBootstrap({ appPath });
+
+    expect(fs.readFileSync(configPath, "utf8")).toContain(
+      'screenshot: "only-on-failure"',
+    );
+  });
+
+  it("leaves a non-Dyad config's screenshot mode alone", async () => {
+    const { appPath } = makeAppWithBrowserMarker({
+      packageVersion: "1.2.3",
+      executableExists: true,
+    });
+    const configPath = path.join(appPath, DYAD_CONFIG_FILENAME);
+    const userOwned =
+      'import { defineConfig } from "@playwright/test";\n' +
+      'export default defineConfig({ use: { screenshot: "only-on-failure" } });\n';
+    fs.writeFileSync(configPath, userOwned);
+
+    await ensurePlaywrightBootstrap({ appPath, screenshotMode: "on" });
+
+    expect(fs.readFileSync(configPath, "utf8")).toBe(userOwned);
   });
 
   it("leaves a config without the Dyad sentinel untouched", async () => {

@@ -19,6 +19,16 @@ export const DYAD_MEDIA_SUBDIR = "media";
 export const DYAD_SCREENSHOT_SUBDIR = "screenshot";
 
 /**
+ * The ".dyad"-relative subdir for UI screenshots captured during E2E runs.
+ *
+ * Deliberately separate from DYAD_SCREENSHOT_SUBDIR, which is owned by the
+ * per-commit preview screenshots: those are keyed by commit hash, listed in the
+ * version pane, and pruned by their own filename regex. Test screenshots follow
+ * neither convention, so they get their own directory and retention policy.
+ */
+export const DYAD_TEST_SCREENSHOT_SUBDIR = "test-screenshot";
+
+/**
  * The subdirectory within each app where uploaded media files are stored.
  */
 export const DYAD_MEDIA_DIR_NAME = `${DYAD_INTERNAL_DIR_NAME}/${DYAD_MEDIA_SUBDIR}`;
@@ -30,14 +40,34 @@ export const ATTACHMENTS_MANIFEST_FILE = "attachments-manifest.json";
 export const DYAD_SCREENSHOT_DIR_NAME = `${DYAD_INTERNAL_DIR_NAME}/${DYAD_SCREENSHOT_SUBDIR}`;
 
 /**
+ * The subdirectory within each app where E2E UI screenshots are stored.
+ */
+export const DYAD_TEST_SCREENSHOT_DIR_NAME = `${DYAD_INTERNAL_DIR_NAME}/${DYAD_TEST_SCREENSHOT_SUBDIR}`;
+
+/**
  * Maximum number of per-commit screenshots retained per app.
  */
 export const MAX_SCREENSHOTS_PER_APP = 100;
 
 /**
+ * Maximum number of E2E UI screenshots retained per app. Higher than the
+ * per-commit cap because a single turn can produce several before/after pairs
+ * and each one is referenced by a chat message that outlives the run.
+ */
+export const MAX_TEST_SCREENSHOTS_PER_APP = 200;
+
+/**
  * Matches a screenshot filename keyed by a 40-char hex SHA-1 commit hash.
  */
 export const SCREENSHOT_FILENAME_REGEX = /^[0-9a-f]{40}\.png$/;
+
+/**
+ * Matches a UI screenshot filename: `ui-<chatId>-<messageId>-<seq>-<phase>.png`.
+ * Prune and listing only ever touch files matching this, so an unrelated file
+ * dropped in the directory is left alone.
+ */
+export const TEST_SCREENSHOT_FILENAME_REGEX =
+  /^ui-\d+-\d+-\d+-(?:before|after)\.png$/;
 
 export interface AttachmentManifestEntry {
   logicalName: string;

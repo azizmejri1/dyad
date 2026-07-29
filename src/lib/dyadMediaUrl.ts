@@ -16,6 +16,17 @@ export function buildDyadMediaUrlForApp(
 }
 
 /**
+ * Builds a renderer-safe URL for a UI screenshot captured during an E2E run.
+ * Uses the app-id form so the renderer never needs the app's filesystem path.
+ */
+export function buildDyadTestScreenshotUrlForApp(
+  appId: number,
+  fileName: string,
+): string {
+  return `dyad-media://media/app-id/${appId}/.dyad/test-screenshot/${encodeURIComponent(fileName)}`;
+}
+
+/**
  * Builds a versioned URL for a bounded media-library thumbnail derivative.
  * The source version lets Chromium cache the derivative without showing stale
  * content after an image is replaced in place.

@@ -61,6 +61,19 @@ function specResult(
   ];
 }
 
+function specResultWithScreenshot(
+  file: string,
+  status: string,
+  screenshotPath: string,
+  errorMessage?: string,
+): PwReport["suites"] {
+  const suites = specResult(file, status, errorMessage)!;
+  suites[0].specs![0].tests![0].results![0].attachments = [
+    { name: "screenshot", path: screenshotPath, contentType: "image/png" },
+  ];
+  return suites;
+}
+
 describe("parsePlaywrightReport", () => {
   const appPath = "/apps/my-app";
 
@@ -402,6 +415,55 @@ describe("parsePlaywrightReport", () => {
       status: "failed",
     });
     expect(result.error).toContain("unexpected");
+  });
+
+  it("surfaces a passing test's screenshot as finalScreenshotPath only", () => {
+    const report: PwReport = {
+      suites: specResultWithScreenshot(
+        "e2e-tests/a.spec.ts",
+        "passed",
+        "/apps/my-app/test-results/a/test-finished-1.png",
+      ),
+    };
+
+    const [result] = parsePlaywrightReport(report, appPath);
+    expect(result.finalScreenshotPath).toBe(
+      "/apps/my-app/test-results/a/test-finished-1.png",
+    );
+    // Failure-only semantics are unchanged: a green run has no failure shot.
+    expect(result.screenshotPath).toBeUndefined();
+    expect(result.tests?.[0].finalScreenshotPath).toBe(
+      "/apps/my-app/test-results/a/test-finished-1.png",
+    );
+  });
+
+  it("reports a failing test's screenshot as both failure and final", () => {
+    const report: PwReport = {
+      suites: specResultWithScreenshot(
+        "e2e-tests/a.spec.ts",
+        "failed",
+        "/apps/my-app/test-results/a/test-failed-1.png",
+        "expect(received).toBe(expected)",
+      ),
+    };
+
+    const [result] = parsePlaywrightReport(report, appPath);
+    expect(result.status).toBe("failed");
+    expect(result.screenshotPath).toBe(
+      "/apps/my-app/test-results/a/test-failed-1.png",
+    );
+    expect(result.finalScreenshotPath).toBe(
+      "/apps/my-app/test-results/a/test-failed-1.png",
+    );
+  });
+
+  it("leaves finalScreenshotPath unset when nothing was captured", () => {
+    const report: PwReport = {
+      suites: specResult("e2e-tests/a.spec.ts", "passed"),
+    };
+
+    const [result] = parsePlaywrightReport(report, appPath);
+    expect(result.finalScreenshotPath).toBeUndefined();
   });
 
   it("surfaces report-level errors as an inconclusive runner result", () => {

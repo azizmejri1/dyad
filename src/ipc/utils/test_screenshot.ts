@@ -14,18 +14,18 @@ const logger = log.scope("test_screenshot");
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 
 /**
- * Read a Playwright failure screenshot as a PNG data URL, enforcing the same
- * containment guards as the `tests:screenshot` IPC handler: PNG-only, resolved
- * through symlinks, and inside the app's `test-results/` directory. Returns
- * null if the path is missing, not a PNG, or escapes the app dir.
+ * Read a Playwright screenshot's bytes, enforcing the same containment guards
+ * as the `tests:screenshot` IPC handler: PNG-only, resolved through symlinks,
+ * and inside the app's `test-results/` directory. Returns null if the path is
+ * missing, not a PNG, or escapes the app dir.
  *
- * Shared by the IPC handler (renderer thumbnails) and the agent's run_tests
- * tool (attaching a failure screenshot to the model).
+ * Shared by the data-URL helper below (IPC thumbnails, model attachments) and
+ * by `test_screenshot_store`, which copies screenshots somewhere durable.
  */
-export async function readTestScreenshotDataUrl(
+export async function readTestScreenshotBytes(
   appPath: string,
   screenshotPath: string,
-): Promise<string | null> {
+): Promise<Buffer | null> {
   // Playwright reports absolute paths, but resolve relative ones against the
   // app dir just in case.
   const resolved = path.isAbsolute(screenshotPath)
@@ -112,7 +112,7 @@ export async function readTestScreenshotDataUrl(
       logger.warn(`Screenshot ${realPath} changed while being read; skipping`);
       return null;
     }
-    return `data:image/png;base64,${buf.toString("base64")}`;
+    return buf;
   } catch (error) {
     logger.warn(`Failed to read screenshot ${realPath}: ${error}`);
     return null;
@@ -121,4 +121,17 @@ export async function readTestScreenshotDataUrl(
       logger.warn(`Failed to close screenshot ${realPath}: ${error}`);
     });
   }
+}
+
+/**
+ * Read a Playwright failure screenshot as a PNG data URL. Same guards as
+ * `readTestScreenshotBytes`; used by the IPC handler (renderer thumbnails) and
+ * the agent's run_tests tool (attaching a failure screenshot to the model).
+ */
+export async function readTestScreenshotDataUrl(
+  appPath: string,
+  screenshotPath: string,
+): Promise<string | null> {
+  const bytes = await readTestScreenshotBytes(appPath, screenshotPath);
+  return bytes ? `data:image/png;base64,${bytes.toString("base64")}` : null;
 }

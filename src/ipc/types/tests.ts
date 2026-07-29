@@ -90,6 +90,13 @@ export const TestCaseResultSchema = z.object({
   error: z.string().optional(),
   /** Best-effort absolute path to a failure screenshot. */
   screenshotPath: z.string().optional(),
+  /**
+   * Best-effort absolute path to the last screenshot of the run, whatever the
+   * outcome. Only populated when the config captures screenshots on every run
+   * (the before/after UI screenshots setting); otherwise it matches
+   * `screenshotPath` when there was a failure, and is unset on a pass.
+   */
+  finalScreenshotPath: z.string().optional(),
 });
 export type TestCaseResult = z.infer<typeof TestCaseResultSchema>;
 
@@ -101,6 +108,13 @@ export const TestResultSchema = z.object({
   error: z.string().optional(),
   /** Best-effort absolute path to a failure screenshot. */
   screenshotPath: z.string().optional(),
+  /**
+   * Best-effort absolute path to the last screenshot of the run, whatever the
+   * outcome. Only populated when the config captures screenshots on every run
+   * (the before/after UI screenshots setting); otherwise it matches
+   * `screenshotPath` when there was a failure, and is unset on a pass.
+   */
+  finalScreenshotPath: z.string().optional(),
   /** Per-test results within the file. */
   tests: z.array(TestCaseResultSchema).optional(),
 });
