@@ -13,6 +13,20 @@ vi.mock("@/ipc/handlers/tests_handlers", () => ({
 vi.mock("@/ipc/utils/test_screenshot", () => ({
   readTestScreenshotDataUrl: vi.fn(),
 }));
+vi.mock("@/ipc/utils/test_screenshot_store", () => ({
+  persistTestScreenshot: vi.fn(),
+  buildUiScreenshotFileName: ({
+    chatId,
+    messageId,
+    seq,
+    phase,
+  }: {
+    chatId: number;
+    messageId: number;
+    seq: number;
+    phase: string;
+  }) => `ui-${chatId}-${messageId}-${seq}-${phase}.png`,
+}));
 vi.mock("@/main/settings", () => ({
   readSettings: vi.fn(() => ({})),
 }));
@@ -24,12 +38,14 @@ import {
   readSpecTestCases,
 } from "@/ipc/handlers/tests_handlers";
 import { readTestScreenshotDataUrl } from "@/ipc/utils/test_screenshot";
+import { persistTestScreenshot } from "@/ipc/utils/test_screenshot_store";
 import { readSettings } from "@/main/settings";
 import { runTestsTool } from "./run_tests";
 
 const runner = vi.mocked(runAppTestsWithIsolation);
 const baseUrl = vi.mocked(getRunningTestBaseUrl);
 const screenshot = vi.mocked(readTestScreenshotDataUrl);
+const screenshotStore = vi.mocked(persistTestScreenshot);
 const specLister = vi.mocked(listSpecFiles);
 const caseLister = vi.mocked(readSpecTestCases);
 const settingsReader = vi.mocked(readSettings);
@@ -38,6 +54,8 @@ function makeCtx(): AgentContext {
   return {
     appId: 1,
     appPath: "/app",
+    chatId: 7,
+    messageId: 42,
     event: { sender: {} },
     fileEditTracker: Object.create(null),
     testingEnabled: true,
@@ -116,8 +134,11 @@ describe("runTestsTool", () => {
     screenshot.mockReset();
     specLister.mockReset();
     caseLister.mockReset();
+    screenshotStore.mockReset();
     baseUrl.mockReturnValue("http://localhost:3000");
     screenshot.mockResolvedValue(null);
+    // Persisting succeeds and echoes back the name the caller asked for.
+    screenshotStore.mockImplementation(async ({ fileName }) => fileName);
     // The spec the tests target exists on disk, so pre-flight resolution lets
     // the run proceed. Individual tests override this to exercise mismatches.
     specLister.mockResolvedValue(["e2e-tests/a.spec.ts"]);
@@ -843,6 +864,211 @@ describe("runTestsTool", () => {
     );
     expect(runner).not.toHaveBeenCalled();
     expect(rerun).toContain("already passed");
+  });
+
+  describe("before/after UI screenshots", () => {
+    /** The setting the whole feature hangs off, plus the panel defaults. */
+    function enableUiScreenshots() {
+      settingsReader.mockReturnValue({
+        enableUiChangeScreenshots: true,
+      } as ReturnType<typeof readSettings>);
+    }
+
+    /** A result carrying a screenshot for a passing run (`screenshot: "on"`). */
+    function passedWithScreenshot(): RunAppTestsResult {
+      return {
+        appId: 1,
+        results: [
+          {
+            file: "e2e-tests/a.spec.ts",
+            status: "passed",
+            finalScreenshotPath: "/app/test-results/a/test-finished-1.png",
+          },
+        ],
+        isolation: { mode: "neon-branch" },
+      };
+    }
+
+    it("captures a baseline without spending a fix attempt when the spec fails", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue({
+        ...failResult("expected 1 received 0"),
+        results: [
+          {
+            ...failResult("expected 1 received 0").results[0],
+            finalScreenshotPath: "/app/test-results/a/test-failed-1.png",
+          },
+        ],
+      });
+      const ctx = makeCtx();
+
+      const out = await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "before" },
+        ctx,
+      );
+
+      const state = ctx.testRunAttempts.get("e2e-tests/a.spec.ts");
+      expect(state?.attempts ?? 0).toBe(0);
+      // Nothing about the fix loop is primed by a baseline.
+      expect(state?.lastFailureSignature).toBeUndefined();
+      expect(state?.fileEditCountAtLastRun).toBeUndefined();
+      expect(state?.uiBaseline?.fileName).toBe("ui-7-42-1-before.png");
+      expect(out).toContain("EXPECTED");
+      expect(out).not.toContain("attempt 1 of");
+      // A baseline must not send the agent into the fix loop.
+      expect(emittedXml(ctx)).not.toContain("Tests failed");
+    });
+
+    it("pairs the baseline with the after run in one card", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue(passedWithScreenshot());
+      const ctx = makeCtx();
+
+      await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "before" },
+        ctx,
+      );
+      addEdit(ctx, "src/App.tsx");
+      await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "after" },
+        ctx,
+      );
+
+      const xml = emittedXml(ctx);
+      expect(xml).toContain('<dyad-ui-diff test-file="e2e-tests/a.spec.ts"');
+      expect(xml).toContain('before="ui-7-42-1-before.png"');
+      expect(xml).toContain('after="ui-7-42-2-after.png"');
+      expect(xml).toContain('outcome="passed"');
+      // The baseline backs exactly one card.
+      expect(
+        ctx.testRunAttempts.get("e2e-tests/a.spec.ts")?.uiBaseline,
+      ).toBeUndefined();
+    });
+
+    it("still shows the after shot when there was no baseline", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue(passedWithScreenshot());
+      const ctx = makeCtx();
+
+      await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "after" },
+        ctx,
+      );
+
+      const xml = emittedXml(ctx);
+      expect(xml).toContain("<dyad-ui-diff");
+      expect(xml).toContain('after="ui-7-42-1-after.png"');
+      expect(xml).not.toContain("before=");
+    });
+
+    it("shows the card for a failing after run, labeled as such", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue({
+        appId: 1,
+        results: [
+          {
+            file: "e2e-tests/a.spec.ts",
+            status: "failed",
+            error: "expected 1 received 0",
+            finalScreenshotPath: "/app/test-results/a/test-failed-1.png",
+            tests: [
+              {
+                title: "does a thing",
+                status: "failed",
+                error: "expected 1 received 0",
+              },
+            ],
+          },
+        ],
+        isolation: { mode: "neon-branch" },
+      });
+      const ctx = makeCtx();
+
+      await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "after" },
+        ctx,
+      );
+
+      const xml = emittedXml(ctx);
+      expect(xml).toContain("<dyad-ui-diff");
+      expect(xml).toContain('outcome="failed"');
+      // The normal failure report still happens.
+      expect(xml).toContain("Tests failed");
+    });
+
+    it("counts a baseline against the per-turn run budget", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue(passedWithScreenshot());
+      const ctx = makeCtx();
+      ctx.testRunCount = 10;
+
+      const out = await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "before" },
+        ctx,
+      );
+
+      expect(runner).not.toHaveBeenCalled();
+      expect(out).toContain("run limit reached");
+    });
+
+    it("refuses a baseline without running when the setting is off", async () => {
+      runner.mockResolvedValue(passedWithScreenshot());
+      const ctx = makeCtx();
+
+      const out = await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "before" },
+        ctx,
+      );
+
+      // No Playwright run, so no run budget or fix attempt is spent.
+      expect(runner).not.toHaveBeenCalled();
+      expect(ctx.testRunCount ?? 0).toBe(0);
+      expect(out).toContain("turned off");
+    });
+
+    it("runs an after phase normally, with no card, when the setting is off", async () => {
+      runner.mockResolvedValue(passedWithScreenshot());
+      const ctx = makeCtx();
+
+      const out = await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "after" },
+        ctx,
+      );
+
+      expect(runner).toHaveBeenCalled();
+      expect(out).toContain("All runnable tests passed");
+      expect(emittedXml(ctx)).not.toContain("dyad-ui-diff");
+      expect(screenshotStore).not.toHaveBeenCalled();
+    });
+
+    it("emits no card when the run produced no screenshot", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue(passedResult);
+      const ctx = makeCtx();
+
+      await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "after" },
+        ctx,
+      );
+
+      expect(emittedXml(ctx)).not.toContain("dyad-ui-diff");
+    });
+
+    it("reports honestly when a baseline captures nothing", async () => {
+      enableUiScreenshots();
+      runner.mockResolvedValue(passedResult);
+      const ctx = makeCtx();
+
+      const out = await runTestsTool.execute(
+        { testFile: "e2e-tests/a.spec.ts", phase: "before" },
+        ctx,
+      );
+
+      expect(out).toContain("no screenshot");
+      expect(
+        ctx.testRunAttempts.get("e2e-tests/a.spec.ts")?.uiBaseline,
+      ).toBeUndefined();
+    });
   });
 
   it("does not list a skipped test as FAILED alongside real failures", async () => {

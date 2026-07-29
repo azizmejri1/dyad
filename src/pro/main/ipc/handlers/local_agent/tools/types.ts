@@ -211,6 +211,11 @@ export interface AgentContext {
   testRunCount?: number;
   /** Whether rebuild_app is registered in this turn's effective tool set. */
   rebuildAppToolAvailable?: boolean;
+  /**
+   * Turn-scoped counter for UI screenshot filenames, so several before/after
+   * pairs in one turn never overwrite each other's images.
+   */
+  uiScreenshotSeq?: number;
 }
 
 /** Per-spec fix-loop state for the `run_tests` tool, tracked across one turn. */
@@ -229,6 +234,11 @@ export interface TestRunAttemptState {
   lastRunTargetKey?: string;
   /** Whether the one free `flakeCheck` rerun has been used for this spec. */
   flakeCheckUsed?: boolean;
+  /**
+   * Baseline UI screenshot captured by a `phase: "before"` run, waiting to be
+   * paired with the next `phase: "after"` run of the same spec.
+   */
+  uiBaseline?: { fileName: string; capturedAt: string };
   /**
    * `AgentContext.mutationCount` at the time each target last PASSED, keyed by
    * canonical target ("" = whole file). Rerunning a target that already passed

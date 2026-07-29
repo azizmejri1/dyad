@@ -18,6 +18,11 @@ import { readSettings } from "@/main/settings";
 import type { RunAppTestsResult, TestResult } from "@/ipc/types/tests";
 import { normalizeFailureSignature } from "./test_failure_signature";
 import {
+  captureUiScreenshot,
+  emitUiDiffCard,
+  uiScreenshotsEnabled,
+} from "./ui_screenshots";
+import {
   MAX_ATTEMPTS,
   MAX_RUNS_PER_TURN,
   MAX_ERROR_CHARS,
@@ -53,6 +58,12 @@ const runTestsSchema = z.object({
     .optional()
     .describe(
       "Set true to rerun WITHOUT having changed any files, to confirm a suspected flaky failure. Allowed once per spec and does not count against the fix-attempt limit.",
+    ),
+  phase: z
+    .enum(["before", "after"])
+    .optional()
+    .describe(
+      "Only for showing the user a visual change. 'before' captures the CURRENT UI as a baseline BEFORE you edit the app — a failure there is expected when the feature doesn't exist yet, so it does NOT count as a fix attempt and you must NOT try to fix it. 'after' runs normally once the change is in, and shows the user a before/after card. Omit for an ordinary verification run.",
     ),
 });
 
@@ -388,6 +399,95 @@ function reportPassed(params: {
 }
 
 /**
+ * Capture the CURRENT UI as a baseline, before the agent edits anything.
+ *
+ * Deliberately outside the fix loop. A baseline of a feature that doesn't exist
+ * yet is SUPPOSED to fail, so routing it through `reportFailure` would burn one
+ * of the spec's fix attempts and send the agent debugging code it hasn't
+ * written. Nothing here touches `attempts`, `lastFailureSignature`,
+ * `passedAtEditCount` or `fileEditCountAtLastRun`; the run does count against
+ * the per-turn run budget, because it really does start Playwright.
+ */
+async function runUiBaseline(
+  ctx: AgentContext,
+  args: RunTestsArgs,
+  testFile: string,
+  state: TestRunAttemptState,
+): Promise<string> {
+  const label = args.grep ? `${testFile} › /${args.grep}/` : testFile;
+
+  if (!uiScreenshotsEnabled()) {
+    const body = `Before/after UI screenshots are turned off in Dyad's settings, so there's nothing to capture and I did NOT start a run (no fix attempt was used). Make your change and verify it with a normal run_tests call — omit \`phase\`.`;
+    completeWarning(ctx, "UI screenshots are off", body);
+    return body;
+  }
+
+  const blocked = guardTurnRunLimit(ctx) ?? guardDevServerRunning(ctx);
+  if (blocked) return blocked;
+
+  let res: RunAppTestsResult;
+  try {
+    ctx.testRunCount = (ctx.testRunCount ?? 0) + 1;
+    res = await runSpec(ctx, testFile, args.grep);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const body = `Couldn't capture a UI baseline — an unexpected error occurred in the test infrastructure. This did NOT count as a fix attempt. Go ahead and make your change; you can still run the spec normally afterwards.\n\n${message}`;
+    completeWarning(ctx, "Couldn't capture UI baseline", body);
+    return body;
+  }
+
+  const outcome = classify(res);
+  if (outcome.kind === "infra") {
+    const body = `Couldn't capture a UI baseline — the run could not complete. This is an infrastructure problem, NOT a test failure, and did NOT count as a fix attempt. Go ahead and make your change; you can still run the spec normally afterwards.\n\n${outcome.message ?? "Unknown error."}`;
+    completeWarning(ctx, "Couldn't capture UI baseline", body);
+    return body;
+  }
+
+  const fileName = await captureUiScreenshot(ctx, res, "before");
+  if (!fileName) {
+    const body = `The baseline run finished but produced no screenshot, so there's no "before" image to show. This did NOT count as a fix attempt. Make your change and verify it with a normal run_tests call.`;
+    completeWarning(ctx, "No UI baseline captured", body);
+    return body;
+  }
+
+  state.uiBaseline = { fileName, capturedAt: new Date().toISOString() };
+  const verdict =
+    outcome.kind === "passed"
+      ? `The spec passed, which is fine — a baseline only needs to reach the screen.`
+      : `The spec did not pass. That is EXPECTED for a feature that doesn't exist yet: do NOT try to fix it, and do NOT read the failure artifacts.`;
+  const body = `Captured the current UI as a "before" baseline for ${label}. ${verdict}\n\nThis did NOT count as a fix attempt. Now make your change, then call run_tests again for this spec with \`phase: "after"\` — Dyad will show the user a before/after card.`;
+  completeStatus(ctx, `Captured UI baseline: ${label}`, body);
+  return body;
+}
+
+/**
+ * Persist this run's screenshot and render the before/after card. Runs for
+ * passing and failing runs alike — a failing run's screenshot is still the UI
+ * the change produced, and the card labels it as a failure state.
+ */
+async function reportUiDiff(
+  ctx: AgentContext,
+  args: RunTestsArgs,
+  testFile: string,
+  state: TestRunAttemptState,
+  res: RunAppTestsResult,
+  outcome: Classification,
+): Promise<void> {
+  if (args.phase !== "after" || !uiScreenshotsEnabled()) return;
+  const after = await captureUiScreenshot(ctx, res, "after");
+  if (!after) return;
+  emitUiDiffCard(ctx, {
+    testFile,
+    grep: args.grep,
+    before: state.uiBaseline?.fileName,
+    after,
+    outcome: outcome.kind === "passed" ? "passed" : "failed",
+  });
+  // One baseline backs one card; a later run needs its own.
+  delete state.uiBaseline;
+}
+
+/**
  * Attach the failure screenshot as an image (tool results are text-only, so it
  * goes as a follow-up user message) and return the artifact-paths section.
  */
@@ -508,6 +608,7 @@ export const runTestsTool: ToolDefinition<RunTestsArgs> = {
 - On failure you get the error text plus the paths of Playwright's artifacts (error-context.md page snapshot, screenshot) — read error-context.md with read_file to see the page state, then fix and rerun.
 - You get ${MAX_ATTEMPTS} fix attempts per spec per turn. When the limit is reached, stop and summarize the situation for the user.
 - If you suspect a failure is flaky, rerun once with \`flakeCheck: true\` (does not count against the limit).
+- To show the user a visual change: call it once with \`phase: "before"\` BEFORE you edit the app (captures the current UI; a failure there is expected and costs no attempt), then again with \`phase: "after"\` once the change is in. Dyad renders the pair as a before/after card in the chat.
 - Never rerun something that already passed: once a target (or the whole file) is green and you haven't changed any files, the tool refuses the run — move on instead.`,
   inputSchema: runTestsSchema,
   defaultConsent: "always",
@@ -541,6 +642,13 @@ export const runTestsTool: ToolDefinition<RunTestsArgs> = {
       if ("error" in validated) return validated.error;
       runTargetKey = validated.targetKey ?? `grep:${args.grep}`;
     }
+
+    // A baseline runs before the change exists, so it skips the fix-loop
+    // guards entirely (see runUiBaseline).
+    if (args.phase === "before") {
+      return runUiBaseline(ctx, args, testFile, state);
+    }
+
     const blocked =
       guardAttemptLimit(ctx, key, state) ??
       guardTurnRunLimit(ctx) ??
@@ -592,8 +700,8 @@ export const runTestsTool: ToolDefinition<RunTestsArgs> = {
         return reportNoRunnableTests(ctx, testFile, args.grep);
       case "infra":
         return reportInfraFailure(ctx, outcome);
-      case "passed":
-        return reportPassed({
+      case "passed": {
+        const body = reportPassed({
           ctx,
           testFile,
           state,
@@ -603,8 +711,12 @@ export const runTestsTool: ToolDefinition<RunTestsArgs> = {
           runTargetKey,
           grep: args.grep,
         });
-      case "failed":
-        return reportFailure({
+        // After the status card, so the chat reads "result, then the visual".
+        await reportUiDiff(ctx, args, testFile, state, res, outcome);
+        return body;
+      }
+      case "failed": {
+        const body = await reportFailure({
           ctx,
           key,
           testFile,
@@ -616,6 +728,9 @@ export const runTestsTool: ToolDefinition<RunTestsArgs> = {
           currentEditCount,
           runTargetKey,
         });
+        await reportUiDiff(ctx, args, testFile, state, res, outcome);
+        return body;
+      }
     }
   },
 };
