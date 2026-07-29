@@ -35,6 +35,19 @@ export const E2E_TEST_DIR = "e2e-tests";
  */
 export const LEGACY_TEST_DIR = "tests";
 
+/**
+ * Where the agent writes throwaway specs whose only job is to reach a screen so
+ * a before/after screenshot can be taken. They are not part of the user's
+ * suite: the Tests panel hides them, and a turn sweeps away any that an earlier
+ * turn failed to delete.
+ */
+export const TEMP_TEST_DIR = `${E2E_TEST_DIR}/tmp`;
+
+/** True for a spec path inside the throwaway-spec directory. */
+export function isTempSpecPath(file: string): boolean {
+  return file.split("\\").join("/").startsWith(`${TEMP_TEST_DIR}/`);
+}
+
 /** Glob matching every E2E spec under an app's `e2e-tests/` folder. */
 export const TEST_SPEC_GLOB = `${E2E_TEST_DIR}/**/*.spec.{${TEST_SPEC_EXTENSIONS.join(",")}}`;
 

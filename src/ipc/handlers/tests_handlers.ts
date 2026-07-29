@@ -11,6 +11,7 @@ import { getDyadAppPath } from "../../paths/paths";
 import { createTypedHandler } from "./base";
 import {
   E2E_TEST_DIR,
+  isTempSpecPath,
   TEST_SPEC_EXT_ALTERNATION,
   TEST_SPEC_GLOB,
   testsContracts,
@@ -784,7 +785,11 @@ export function registerTestsHandlers() {
   createTypedHandler(testsContracts.listAppTests, async (_event, params) => {
     const app = await getApp(params.appId);
     const appPath = getDyadAppPath(app.path);
-    const matches = await listSpecFiles(appPath);
+    // Throwaway screenshot specs are an implementation detail of the agent's
+    // before/after cards, not part of the user's suite.
+    const matches = (await listSpecFiles(appPath)).filter(
+      (file) => !isTempSpecPath(file),
+    );
     const specs = await Promise.all(
       matches.map(async (file) => ({
         file,

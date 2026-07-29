@@ -85,6 +85,7 @@ import {
 } from "./prepare_step_utils";
 import { deleteTodos, loadTodos, saveTodos } from "./todo_persistence";
 import { ensureDyadGitignored } from "@/ipc/handlers/gitignoreUtils";
+import { sweepTempSpecs } from "@/ipc/utils/temp_specs";
 import { TOOL_DEFINITIONS } from "./tool_definitions";
 import {
   parseAiMessagesJson,
@@ -727,6 +728,12 @@ export async function handleLocalAgentStream(
     if (!readOnly && !planModeOnly) {
       await ensureDyadGitignored(appPath).catch((err: unknown) =>
         logger.warn("Failed to ensure .dyad gitignored:", err),
+      );
+      // Clear throwaway screenshot specs an earlier turn didn't delete. Safe
+      // here because anything present at the start of a turn belongs to a turn
+      // that has already finished.
+      await sweepTempSpecs(appPath).catch((err: unknown) =>
+        logger.warn("Failed to sweep temp specs:", err),
       );
     }
     if (persistedTodos.length > 0) {
