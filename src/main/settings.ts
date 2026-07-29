@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   selectedChatMode: "build",
   enableAppBlueprint: true,
   enableTestingForNewApps: false,
+  enableUiChangeScreenshots: false,
   enableAutoUpdate: true,
   releaseChannel: "stable",
   selectedTemplateId: DEFAULT_TEMPLATE_ID,

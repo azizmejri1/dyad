@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AppBlueprintSwitch } from "@/components/AppBlueprintSwitch";
 import { TestingForNewAppsSwitch } from "@/components/TestingForNewAppsSwitch";
+import { UiChangeScreenshotsSwitch } from "@/components/UiChangeScreenshotsSwitch";
 import { AutoExpandPreviewSwitch } from "@/components/AutoExpandPreviewSwitch";
 import { KeepPreviewsRunningSwitch } from "@/components/KeepPreviewsRunningSwitch";
 import { ChatEventNotificationSwitch } from "@/components/ChatEventNotificationSwitch";
@@ -497,6 +498,16 @@ export function WorkflowSettings() {
           When creating a new app, opt it into AI E2E testing by default. This
           only affects apps created while this setting is on; existing apps are
           unchanged.
+        </p>
+      </div>
+
+      <div id={SETTING_IDS.uiChangeScreenshots} className="space-y-1.5">
+        <UiChangeScreenshotsSwitch />
+        <p className={hint}>
+          When the agent makes a visual change to an app that has AI E2E testing
+          enabled, capture before/after screenshots during its test runs and
+          show them in the chat. Off means no screenshots are captured, even for
+          apps with testing enabled.
         </p>
       </div>
 

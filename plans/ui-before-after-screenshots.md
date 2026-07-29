@@ -13,6 +13,11 @@ Requirements (from the feature request):
 3. **Every** run takes a screenshot, including passing runs.
 4. The chat renders a card: "this is the UI before, this is the UI after".
 
+The whole feature sits behind a user setting (**Before/After UI Screenshots**,
+`enableUiChangeScreenshots`, off by default). With it off, no screenshots are captured
+even for apps that have E2E testing enabled — enforced at the Playwright config level,
+so it holds for panel runs as well as agent runs.
+
 ## What already exists (do not rebuild)
 
 | Piece | Where | State |
@@ -123,9 +128,11 @@ than widening the existing one:
   `test-results/` containment, `O_NOFOLLOW`, 5 MB cap) to *read*, then copy into
   `.dyad/test-screenshot/`. Must run **before** the next Playwright run, which clears
   `test-results/`.
-- Prune to `MAX_TEST_SCREENSHOTS_PER_APP` (suggest 200) by mtime, mirroring
+- Prune to `MAX_TEST_SCREENSHOTS_PER_APP` (200) by mtime, mirroring
   `readScreenshotEntries` in `app_handlers.ts:67`.
-- Extend `media_cleanup.ts` (30-day TTL sweep) to cover the new dir.
+- Retention is the count cap **only** — deliberately not the 30-day TTL sweep in
+  `media_cleanup.ts`. A TTL would break the card in a month-old chat while freeing
+  almost nothing (200 PNGs ≈ tens of MB), so the cap alone bounds growth.
 
 **1.5 Protocol allowlist.** Add the subdir to `allowedSubdirs`
 (`dyad_media_protocol.ts:107`). Leave the `thumbnail=1` path media-only (`:157`) — cards

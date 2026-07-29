@@ -407,6 +407,10 @@ const BaseUserSettingsFields = {
   // When enabled, newly created apps opt into the AI E2E testing feature by
   // default (their `testing_enabled` column is seeded to true at creation).
   enableTestingForNewApps: z.boolean().optional(),
+  // When enabled, the agent captures before/after screenshots of visual changes
+  // during its E2E runs and shows them in chat. Requires the app to also have
+  // testing enabled; off means no screenshots are captured even then.
+  enableUiChangeScreenshots: z.boolean().optional(),
   // Test run modes chosen in the Tests panel. Persisted so both the panel's
   // Run button and the agent's run_tests tool share the same headed/serial
   // preference. Default (unset) is headless + serial.
