@@ -1726,6 +1726,7 @@ ${componentSnippet}
           codeExplorerAvailable,
           historyExplorerAvailable,
           testingEnabled: !!updatedChat.app?.testingEnabled,
+          uiScreenshotsEnabled: !!settings.enableUiChangeScreenshots,
           restartAppToolAvailable,
           rebuildAppToolAvailable,
         });

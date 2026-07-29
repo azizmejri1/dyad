@@ -90,6 +90,7 @@ export function registerTokenCountHandlers() {
         frameworkType,
         hasSupabaseProject: !!chat.app?.supabaseProjectId,
         testingEnabled: !!chat.app?.testingEnabled,
+        uiScreenshotsEnabled: !!settings.enableUiChangeScreenshots,
       });
       let supabaseContext = "";
 

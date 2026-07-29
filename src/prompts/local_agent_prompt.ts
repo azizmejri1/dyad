@@ -4,7 +4,10 @@
  */
 
 import type { AppFrameworkType } from "@/lib/framework_constants";
-import { AGENT_TEST_WRITING_GUIDANCE } from "./system_prompt";
+import {
+  AGENT_TEST_WRITING_GUIDANCE,
+  AGENT_UI_SCREENSHOT_GUIDANCE,
+} from "./system_prompt";
 
 // ============================================================================
 // Shared Prompt Blocks (used by both Pro and Basic Agent modes)
@@ -150,14 +153,16 @@ function developmentWorkflowBlock({
   enableAppBlueprint,
   understandStep,
   testingEnabled,
+  uiScreenshotsEnabled,
 }: {
   enableAppBlueprint: boolean;
   understandStep: string;
   testingEnabled: boolean;
+  uiScreenshotsEnabled: boolean;
 }): string {
   const planContextRange = enableAppBlueprint ? "steps 1-3" : "steps 1-2";
   const verifyTestsClause = testingEnabled
-    ? " This app has e2e testing enabled: if you added or changed user-facing behavior that deserves coverage, add or update the relevant Playwright spec under `e2e-tests/`; also review the existing specs whose flows touch what you changed (read them, don't run the whole suite) and update any that no longer match. Then run the affected spec(s) with `run_tests` and fix any failures before finishing (skip trivial/cosmetic changes)."
+    ? ` This app has e2e testing enabled: if you added or changed user-facing behavior that deserves coverage, add or update the relevant Playwright spec under \`e2e-tests/\`; also review the existing specs whose flows touch what you changed (read them, don't run the whole suite) and update any that no longer match. Then run the affected spec(s) with \`run_tests\` and fix any failures before finishing (skip trivial/cosmetic changes).${uiScreenshotsEnabled ? ' If the change is VISUAL, bracket it with `run_tests` `phase: "before"` (before you edit) and `phase: "after"` so the user gets a before/after card — see the screenshot guidance below.' : ""}`
     : "";
   const steps: string[] = [];
   if (enableAppBlueprint) {
@@ -183,11 +188,13 @@ function proDevelopmentWorkflowBlock({
   codeExplorerAvailable,
   historyExplorerAvailable,
   testingEnabled,
+  uiScreenshotsEnabled,
 }: {
   enableAppBlueprint: boolean;
   codeExplorerAvailable: boolean;
   historyExplorerAvailable: boolean;
   testingEnabled: boolean;
+  uiScreenshotsEnabled: boolean;
 }): string {
   const codeExplorationGuidance = codeExplorerAvailable
     ? CODE_EXPLORATION_GUIDANCE
@@ -203,6 +210,7 @@ function proDevelopmentWorkflowBlock({
     enableAppBlueprint,
     understandStep,
     testingEnabled,
+    uiScreenshotsEnabled,
   });
 }
 
@@ -236,12 +244,14 @@ You have two tools for editing files. Choose based on the scope of your change:
 function basicDevelopmentWorkflowBlock(
   enableAppBlueprint: boolean,
   testingEnabled: boolean,
+  uiScreenshotsEnabled: boolean,
 ): string {
   const understandStep = `**Understand:** Think about the user's request and the relevant codebase context. Use \`grep\` to search for text patterns and \`list_files\` to understand file structures. Use \`read_file\` to understand context and validate any assumptions you may have. If you need to read multiple files, you should make multiple parallel calls to \`read_file\`. ${CHAT_HISTORY_RECALL_GUIDANCE}`;
   return developmentWorkflowBlock({
     enableAppBlueprint,
     understandStep,
     testingEnabled,
+    uiScreenshotsEnabled,
   });
 }
 
@@ -393,6 +403,7 @@ function buildLocalAgentSystemPrompt({
   codeExplorerAvailable,
   historyExplorerAvailable,
   testingEnabled,
+  uiScreenshotsEnabled,
   restartAppToolAvailable,
   rebuildAppToolAvailable,
 }: {
@@ -400,6 +411,7 @@ function buildLocalAgentSystemPrompt({
   codeExplorerAvailable: boolean;
   historyExplorerAvailable: boolean;
   testingEnabled: boolean;
+  uiScreenshotsEnabled: boolean;
   restartAppToolAvailable: boolean;
   rebuildAppToolAvailable: boolean;
 }): string {
@@ -420,9 +432,9 @@ ${PRO_TOOL_CALLING_BEST_PRACTICES_BLOCK}
 
 ${PRO_FILE_EDITING_TOOL_SELECTION_BLOCK}
 
-${proDevelopmentWorkflowBlock({ enableAppBlueprint, codeExplorerAvailable, historyExplorerAvailable, testingEnabled })}
+${proDevelopmentWorkflowBlock({ enableAppBlueprint, codeExplorerAvailable, historyExplorerAvailable, testingEnabled, uiScreenshotsEnabled })}
 [[SERVER_LAYER]]
-${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}
+${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}${testingEnabled && uiScreenshotsEnabled ? `\n${AGENT_UI_SCREENSHOT_GUIDANCE}\n` : ""}
 ${IMAGE_GENERATION_BLOCK}
 ${enableAppBlueprint ? `\n${APP_BLUEPRINT_BLOCK}\n` : ""}
 ${AI_RULES_BLOCK}
@@ -436,6 +448,7 @@ ${AI_RULES_BLOCK}
 function buildLocalAgentBasicSystemPrompt(
   enableAppBlueprint: boolean,
   testingEnabled: boolean,
+  uiScreenshotsEnabled: boolean,
   restartAppToolAvailable: boolean,
   rebuildAppToolAvailable: boolean,
 ): string {
@@ -456,9 +469,9 @@ ${BASIC_TOOL_CALLING_BEST_PRACTICES_BLOCK}
 
 ${BASIC_FILE_EDITING_TOOL_SELECTION_BLOCK}
 
-${basicDevelopmentWorkflowBlock(enableAppBlueprint, testingEnabled)}
+${basicDevelopmentWorkflowBlock(enableAppBlueprint, testingEnabled, uiScreenshotsEnabled)}
 [[SERVER_LAYER]]
-${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}${enableAppBlueprint ? `\n${APP_BLUEPRINT_BLOCK}\n` : ""}
+${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}${testingEnabled && uiScreenshotsEnabled ? `\n${AGENT_UI_SCREENSHOT_GUIDANCE}\n` : ""}${enableAppBlueprint ? `\n${APP_BLUEPRINT_BLOCK}\n` : ""}
 ${AI_RULES_BLOCK}
 `;
 }
@@ -508,6 +521,13 @@ export function constructLocalAgentPrompt(
      * in every prompt.
      */
     testingEnabled?: boolean;
+    /**
+     * Whether the user turned on before/after UI screenshots. Gates the
+     * screenshot guidance: with it off nothing is captured, so instructions to
+     * bracket a change with baseline runs would ask for runs that produce no
+     * card. Only has an effect together with `testingEnabled`.
+     */
+    uiScreenshotsEnabled?: boolean;
     restartAppToolAvailable?: boolean;
     rebuildAppToolAvailable?: boolean;
   },
@@ -516,6 +536,7 @@ export function constructLocalAgentPrompt(
   const codeExplorerAvailable = !!options?.codeExplorerAvailable;
   const historyExplorerAvailable = !!options?.historyExplorerAvailable;
   const testingEnabled = !!options?.testingEnabled;
+  const uiScreenshotsEnabled = !!options?.uiScreenshotsEnabled;
   const restartAppToolAvailable = options?.restartAppToolAvailable !== false;
   const rebuildAppToolAvailable = options?.rebuildAppToolAvailable !== false;
 
@@ -527,6 +548,7 @@ export function constructLocalAgentPrompt(
     basePrompt = buildLocalAgentBasicSystemPrompt(
       enableAppBlueprint,
       testingEnabled,
+      uiScreenshotsEnabled,
       restartAppToolAvailable,
       rebuildAppToolAvailable,
     );
@@ -536,6 +558,7 @@ export function constructLocalAgentPrompt(
       codeExplorerAvailable,
       historyExplorerAvailable,
       testingEnabled,
+      uiScreenshotsEnabled,
       restartAppToolAvailable,
       rebuildAppToolAvailable,
     });

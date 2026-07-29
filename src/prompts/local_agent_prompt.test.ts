@@ -128,6 +128,36 @@ describe("local_agent_prompt", () => {
     expect(enabled).toContain("# Writing end-to-end tests");
   });
 
+  it("gates screenshot guidance on the setting AND testingEnabled", () => {
+    const heading = "## Showing the user what changed visually";
+
+    // The setting alone does nothing: without testing there are no runs to
+    // capture from.
+    expect(
+      constructLocalAgentPrompt(undefined, undefined, {
+        uiScreenshotsEnabled: true,
+      }),
+    ).not.toContain(heading);
+    // Testing alone does nothing either: with the setting off, nothing is
+    // captured, so a baseline run would produce no card.
+    expect(
+      constructLocalAgentPrompt(undefined, undefined, { testingEnabled: true }),
+    ).not.toContain(heading);
+
+    for (const basicAgentMode of [false, true]) {
+      const prompt = constructLocalAgentPrompt(undefined, undefined, {
+        basicAgentMode,
+        testingEnabled: true,
+        uiScreenshotsEnabled: true,
+      });
+      expect(prompt).toContain(heading);
+      expect(prompt).toContain('phase: "before"');
+      expect(prompt).toContain("e2e-tests/tmp/");
+      // The workflow step points at the guidance rather than repeating it.
+      expect(prompt).toContain("before/after card");
+    }
+  });
+
   it("ask mode system prompt", () => {
     const prompt = constructLocalAgentPrompt(undefined, undefined, {
       readOnly: true,

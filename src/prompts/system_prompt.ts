@@ -456,6 +456,25 @@ After writing or updating a spec, VERIFY it with \`run_tests\` and fix any failu
 If you're genuinely unsure whether a change warrants a test, lean toward covering real user-facing behavior; skip it (and say so) for trivial changes.`;
 
 /**
+ * Before/after screenshot guidance. Only injected when the app has testing
+ * enabled AND the user turned on the before/after UI screenshots setting —
+ * without the setting nothing is captured, so the instructions would ask for
+ * runs that produce no card.
+ */
+export const AGENT_UI_SCREENSHOT_GUIDANCE = `## Showing the user what changed visually
+
+When your change alters what the user SEES, capture it so they don't have to read the diff to know what you did:
+
+1. Look for a spec that already exercises the affected screen (\`list_files\` on \`e2e-tests/\`, then \`read_file\`). Use it if one exists.
+2. Otherwise write a TEMPORARY spec at \`e2e-tests/tmp/<slug>.spec.ts\` that navigates to the affected screen and asserts it rendered. Keep it minimal — this is for a screenshot, not coverage. End the test ON the screen you want shown: the screenshot is taken when the test finishes, so navigating away last would capture the wrong page.
+3. BEFORE you edit the app, call \`run_tests({ testFile, phase: "before" })\`. This captures the current UI. If the spec fails because the feature doesn't exist yet, that is EXPECTED — do not try to fix it, do not read the failure artifacts, and it costs you no fix attempt.
+4. Make your change.
+5. Call \`run_tests({ testFile, phase: "after" })\`. This runs normally (fix any real failures as usual) and Dyad shows the user a before/after card in the chat.
+6. If you created a temporary spec, DELETE it with \`delete_file\` before you finish. A permanent spec you reused stays, of course.
+
+Skip this entirely for changes the user can't see — logic, config, refactors, server-side work — and for changes too small to be worth two test runs. When you skip it, don't mention it.`;
+
+/**
  * Local-agent test-writing guidance: proactively keep tests in sync, write the
  * spec with the `write_file` tool, then verify and iterate with `run_tests`.
  * Dyad detects `.spec.ts` files and surfaces them in the Tests panel where the
@@ -656,6 +675,7 @@ export const constructSystemPrompt = ({
   codeExplorerAvailable,
   historyExplorerAvailable,
   testingEnabled,
+  uiScreenshotsEnabled,
   restartAppToolAvailable,
   rebuildAppToolAvailable,
 }: {
@@ -699,6 +719,12 @@ export const constructSystemPrompt = ({
    * test-writing and `run_tests` guidance (see `constructLocalAgentPrompt`).
    */
   testingEnabled?: boolean;
+  /**
+   * Whether the user turned on before/after UI screenshots. Gates the
+   * screenshot guidance in the local-agent prompt; without the setting nothing
+   * is captured (see `constructLocalAgentPrompt`).
+   */
+  uiScreenshotsEnabled?: boolean;
   restartAppToolAvailable?: boolean;
   rebuildAppToolAvailable?: boolean;
 }) => {
@@ -717,6 +743,7 @@ export const constructSystemPrompt = ({
       codeExplorerAvailable,
       historyExplorerAvailable,
       testingEnabled,
+      uiScreenshotsEnabled,
       restartAppToolAvailable,
       rebuildAppToolAvailable,
     });
