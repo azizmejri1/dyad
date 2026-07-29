@@ -48,6 +48,7 @@ import { DyadWebSearch } from "./DyadWebSearch";
 import { DyadWebCrawl } from "./DyadWebCrawl";
 import { DyadWebFetch } from "./DyadWebFetch";
 import { DyadImageGeneration } from "./DyadImageGeneration";
+import { DyadUiDiff } from "./DyadUiDiff";
 import { DyadCodeSearchResult } from "./DyadCodeSearchResult";
 import { DyadCodeSearch } from "./DyadCodeSearch";
 import { DyadRead } from "./DyadRead";
@@ -1105,6 +1106,22 @@ function renderCustomTag(
         >
           {content}
         </DyadImageGeneration>
+      );
+
+    case "dyad-ui-diff":
+      return (
+        <DyadUiDiff
+          node={{
+            properties: {
+              testFile: attributes["test-file"] || "",
+              label: attributes.label || "",
+              before: attributes.before || "",
+              after: attributes.after || "",
+              outcome: attributes.outcome || "",
+              state: getState({ isStreaming, inProgress }),
+            },
+          }}
+        />
       );
 
     case "dyad-status":

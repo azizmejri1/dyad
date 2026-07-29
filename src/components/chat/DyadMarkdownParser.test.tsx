@@ -44,6 +44,12 @@ vi.mock("@/hooks/useStreamChat", () => ({
   useStreamChat: () => ({ streamMessage: vi.fn() }),
 }));
 
+// Cards that resolve the app's path (e.g. dyad-ui-diff) would otherwise need a
+// react-query provider around every render in this file.
+vi.mock("@/hooks/useLoadApp", () => ({
+  useLoadApp: () => ({ app: { path: "my-app", resolvedPath: "/apps/my-app" } }),
+}));
+
 vi.mock("@/hooks/useChatStream", () => ({
   useChatStreamState: () => mockStreamState.current,
 }));
@@ -99,6 +105,25 @@ describe("DyadMarkdownParser dyad-status", () => {
     expect(screen.getByText("Type errors found")).toBeTruthy();
     expect(container.querySelector(".text-green-600")).toBeTruthy();
     expect(container.querySelector(".text-red-600")).toBeNull();
+  });
+});
+
+describe("DyadMarkdownParser dyad-ui-diff", () => {
+  afterEach(cleanup);
+
+  it("routes the tag to the before/after card instead of leaking markup", () => {
+    const { container } = render(
+      <DyadMarkdownParser
+        content={
+          '<dyad-ui-diff test-file="e2e-tests/cart.spec.ts" label="e2e-tests/cart.spec.ts" before="ui-7-42-1-before.png" after="ui-7-42-2-after.png" outcome="passed"></dyad-ui-diff>'
+        }
+      />,
+    );
+
+    expect(screen.getByText("UI Change")).toBeTruthy();
+    expect(screen.getByText("Before")).toBeTruthy();
+    expect(screen.getByText("After")).toBeTruthy();
+    expect(container.textContent).not.toContain("dyad-ui-diff");
   });
 });
 
