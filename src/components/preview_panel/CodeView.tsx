@@ -2,7 +2,13 @@ import { FileEditor } from "./FileEditor";
 import { FileTree } from "./FileTree";
 import { useEffect, useState } from "react";
 import { useLoadApp } from "@/hooks/useLoadApp";
-import { RefreshCw, Maximize2, Minimize2, ArrowLeft } from "lucide-react";
+import {
+  RefreshCw,
+  Maximize2,
+  Minimize2,
+  ArrowLeft,
+  Pencil,
+} from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -17,7 +23,15 @@ import { StagedDiffView } from "./StagedDiffView";
 import { CommitMenu } from "./CommitMenu";
 import { useUncommittedFiles } from "@/hooks/useUncommittedFiles";
 import { useVersionPreview } from "@/hooks/useVersionPreview";
-import { diffVersionIdForState } from "@/version_preview/state";
+import {
+  diffVersionIdForState,
+  selectedDiffFileForState,
+} from "@/version_preview/state";
+import { useVersionChanges } from "@/hooks/useVersionChanges";
+import {
+  getDisplayedStagedDiffPath,
+  getDisplayedVersionDiffPath,
+} from "./diffSelection";
 
 interface App {
   id?: number;
@@ -33,6 +47,7 @@ export interface CodeViewProps {
 export const CodeView = ({ loading, app }: CodeViewProps) => {
   const { t } = useTranslation("home");
   const selectedFile = useAtomValue(selectedFileAtom);
+  const setSelectedFile = useSetAtom(selectedFileAtom);
   const { state: previewState, send: sendPreviewEvent } = useVersionPreview(
     app?.id ?? null,
   );
@@ -40,7 +55,13 @@ export const CodeView = ({ loading, app }: CodeViewProps) => {
   const stagedDiffFile = useAtomValue(stagedDiffFileAtom);
   const setStagedDiffFile = useSetAtom(stagedDiffFileAtom);
   const { refreshApp } = useLoadApp(app?.id ?? null);
-  const { hasUncommittedFiles } = useUncommittedFiles(app?.id ?? null);
+  const { uncommittedFiles, hasUncommittedFiles } = useUncommittedFiles(
+    app?.id ?? null,
+  );
+  const { changes: versionChanges } = useVersionChanges(
+    app?.id ?? null,
+    selectedVersionId,
+  );
 
   // Exits version-diff mode (entered via the version history pane or the chat's
   // modified-files card) and returns to the live file tree. Without this the
@@ -85,6 +106,30 @@ export const CodeView = ({ loading, app }: CodeViewProps) => {
   const isVersionDiffMode = selectedVersionId != null && app.id != null;
   const isStagedDiffMode =
     stagedDiffFile != null && app.id != null && !isVersionDiffMode;
+  const selectedVersionDiffFile = selectedDiffFileForState(previewState);
+  const displayedDiffPath = isVersionDiffMode
+    ? getDisplayedVersionDiffPath(
+        versionChanges,
+        selectedVersionDiffFile?.versionId === selectedVersionId
+          ? selectedVersionDiffFile.path
+          : null,
+      )
+    : isStagedDiffMode
+      ? getDisplayedStagedDiffPath(uncommittedFiles, stagedDiffFile)
+      : null;
+  const canEditDisplayedDiff =
+    displayedDiffPath != null && app.files?.includes(displayedDiffPath) === true;
+
+  const editDisplayedDiff = () => {
+    if (!displayedDiffPath || !canEditDisplayedDiff) return;
+
+    setSelectedFile({ path: displayedDiffPath });
+    if (isVersionDiffMode) {
+      closeVersionDiff();
+    } else {
+      setStagedDiffFile(null);
+    }
+  };
 
   // The version diff view is driven by the selected commit, not the current
   // working-tree files, so it must render even when the checkout has no files
@@ -161,6 +206,27 @@ export const CodeView = ({ loading, app }: CodeViewProps) => {
                 : `${app.files?.length ?? 0} ${t("preview.files")}`}
           </div>
           <div className="flex-1" />
+          {(isVersionDiffMode || isStagedDiffMode) && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={editDisplayedDiff}
+                    disabled={!canEditDisplayedDiff}
+                    aria-label={t("preview.editLatestVersion")}
+                    data-testid="edit-latest-version-button"
+                    className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                }
+              >
+                <Pencil size={16} />
+              </TooltipTrigger>
+              <TooltipContent>
+                {t("preview.editLatestVersion")}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {app.id != null && <CommitMenu appId={app.id} />}
           <Tooltip>
             <TooltipTrigger
