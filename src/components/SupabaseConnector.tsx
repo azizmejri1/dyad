@@ -34,6 +34,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLoadApp } from "@/hooks/useLoadApp";
+import {
+  useLegacySupabaseKey,
+  useSwitchToPublishableKey,
+} from "@/hooks/useLegacySupabaseKey";
 
 // @ts-ignore
 import supabaseLogoLight from "../../assets/supabase/supabase-logo-wordmark--light.svg";
@@ -63,6 +67,15 @@ export function SupabaseConnector({ appId }: { appId: number }) {
 
   // Check if there are any connected organizations
   const isConnected = isSupabaseConnected(settings);
+
+  // Detection only drives the warning copy — the button below stays available
+  // either way, since the key can live in shapes Dyad can't recognize.
+  const legacyKeyQuery = useLegacySupabaseKey(
+    appId,
+    isConnected && !!app?.supabaseProjectId,
+  );
+  const hasLegacyKey = legacyKeyQuery.data?.hasLegacyKey ?? false;
+  const switchKey = useSwitchToPublishableKey();
 
   const branchesProjectId =
     app?.supabaseParentProjectId || app?.supabaseProjectId;
@@ -205,6 +218,24 @@ export function SupabaseConnector({ appId }: { appId: number }) {
     }
   };
 
+  const handleUpdateApiKey = async () => {
+    try {
+      const { updated } = await switchKey.mutateAsync({ appId });
+      toast.success(
+        updated
+          ? t("integrations.supabase.apiKeyUpdated")
+          : t("integrations.supabase.apiKeyAlreadyCurrent"),
+      );
+    } catch (error) {
+      console.error("Failed to update the app's Supabase key:", error);
+      toast.error(
+        t("integrations.supabase.failedUpdateApiKey", {
+          error: String(error),
+        }),
+      );
+    }
+  };
+
   const handleUnsetProject = async () => {
     try {
       await unsetAppProject(appId);
@@ -325,6 +356,32 @@ export function SupabaseConnector({ appId }: { appId: number }) {
                   </SelectContent>
                 </Select>
               )}
+            </div>
+
+            {/* Always available, not gated on detection: the key can live in
+            shapes Dyad can't recognize, and an action the user can't reach when
+            detection misses is worse than one they can always click. Detection
+            only adds the warning above it. */}
+            <div className="space-y-2">
+              {hasLegacyKey && (
+                <Alert data-testid="supabase-legacy-key-warning">
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    {t("integrations.supabase.legacyApiKeyWarning")}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <Button
+                variant="outline"
+                onClick={handleUpdateApiKey}
+                disabled={switchKey.isPending}
+                data-testid="supabase-update-api-key-button"
+              >
+                {t("integrations.supabase.updateApiKey")}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                {t("integrations.supabase.updateApiKeyDescription")}
+              </p>
             </div>
 
             <Button variant="destructive" onClick={handleUnsetProject}>

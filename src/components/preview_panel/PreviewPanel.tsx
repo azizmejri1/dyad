@@ -27,7 +27,6 @@ import { SecurityPanel } from "./SecurityPanel";
 import { TestsPanel } from "./TestsPanel";
 import { PlanPanel } from "./PlanPanel";
 import { PackageManagerWarningBanner } from "./PackageManagerWarningBanner";
-import { SupabaseKeyWarningBanner } from "./SupabaseKeyWarningBanner";
 import { useSupabase } from "@/hooks/useSupabase";
 import { useTranslation } from "react-i18next";
 import { ipc } from "@/ipc/types";
@@ -173,7 +172,6 @@ export function PreviewPanel() {
             <div className="flex h-full flex-col">
               <PreviewToolbar />
               <PackageManagerWarningBanner />
-              <SupabaseKeyWarningBanner />
               <div className="flex-1 overflow-y-auto">
                 {isNodeMissing ? (
                   <PreviewNodeRequirement
