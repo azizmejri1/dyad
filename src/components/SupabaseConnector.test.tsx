@@ -96,32 +96,41 @@ function renderConnector() {
 }
 
 const BUTTON = "supabase-update-api-key-button";
-const WARNING = "supabase-legacy-key-warning";
+const SECTION = "supabase-legacy-key";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  detectLegacyAppKeyMock.mockResolvedValue({ hasLegacyKey: false });
+  detectLegacyAppKeyMock.mockResolvedValue({ hasLegacyKey: true });
   switchAppToPublishableKeyMock.mockResolvedValue({ updated: true });
 });
 
 describe("SupabaseConnector — app API key", () => {
-  // The whole point of putting it here: detection can miss the key entirely,
-  // so the action must stay reachable regardless of what detection says.
-  it("offers the update even when no legacy key is detected", async () => {
+  it("offers the update when the app holds this project's legacy key", async () => {
     renderConnector();
 
-    expect(await screen.findByTestId(BUTTON)).toBeTruthy();
-    await waitFor(() => expect(detectLegacyAppKeyMock).toHaveBeenCalled());
-    expect(screen.queryByTestId(WARNING)).toBeNull();
+    expect(await screen.findByTestId(SECTION)).toBeTruthy();
+    expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });
 
-  it("warns when a legacy key is detected", async () => {
-    detectLegacyAppKeyMock.mockResolvedValue({ hasLegacyKey: true });
+  // An app already on a publishable key has nothing to update.
+  it("renders nothing when no legacy key is detected", async () => {
+    detectLegacyAppKeyMock.mockResolvedValue({ hasLegacyKey: false });
 
     renderConnector();
 
-    expect(await screen.findByTestId(WARNING)).toBeTruthy();
-    expect(screen.getByTestId(BUTTON)).toBeTruthy();
+    await waitFor(() => expect(detectLegacyAppKeyMock).toHaveBeenCalled());
+    expect(screen.queryByTestId(SECTION)).toBeNull();
+    expect(screen.queryByTestId(BUTTON)).toBeNull();
+  });
+
+  // Detection failing is non-critical — the offer just doesn't appear.
+  it("renders nothing when detection fails", async () => {
+    detectLegacyAppKeyMock.mockRejectedValue(new Error("supabase down"));
+
+    renderConnector();
+
+    await waitFor(() => expect(detectLegacyAppKeyMock).toHaveBeenCalled());
+    expect(screen.queryByTestId(SECTION)).toBeNull();
   });
 
   it("reports a completed switch", async () => {
@@ -136,8 +145,8 @@ describe("SupabaseConnector — app API key", () => {
     );
   });
 
-  // Clicking with nothing to change is expected here, since the button isn't
-  // gated on detection — say so rather than looking like it did nothing.
+  // Reachable despite the gate: the file can change between the detection
+  // that showed the button and the click.
   it("says so when the key was already current", async () => {
     switchAppToPublishableKeyMock.mockResolvedValue({ updated: false });
 

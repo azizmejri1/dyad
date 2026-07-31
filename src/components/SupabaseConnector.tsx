@@ -68,8 +68,9 @@ export function SupabaseConnector({ appId }: { appId: number }) {
   // Check if there are any connected organizations
   const isConnected = isSupabaseConnected(settings);
 
-  // Detection only drives the warning copy — the button below stays available
-  // either way, since the key can live in shapes Dyad can't recognize.
+  // Gates the update offer: true only when the app's generated client is
+  // holding this project's legacy key and a publishable key exists to replace
+  // it.
   const legacyKeyQuery = useLegacySupabaseKey(
     appId,
     isConnected && !!app?.supabaseProjectId,
@@ -358,31 +359,31 @@ export function SupabaseConnector({ appId }: { appId: number }) {
               )}
             </div>
 
-            {/* Always available, not gated on detection: the key can live in
-            shapes Dyad can't recognize, and an action the user can't reach when
-            detection misses is worse than one they can always click. Detection
-            only adds the warning above it. */}
-            <div className="space-y-2">
-              {hasLegacyKey && (
-                <Alert data-testid="supabase-legacy-key-warning">
+            {/* Shown only once the app's client is confirmed to hold this
+            project's legacy key — an app already on a publishable key has
+            nothing to update. Detection has to find the key for this to appear
+            at all (see detectLegacyAppKey). */}
+            {hasLegacyKey && (
+              <div className="space-y-2" data-testid="supabase-legacy-key">
+                <Alert>
                   <Info className="h-4 w-4" />
                   <AlertDescription>
                     {t("integrations.supabase.legacyApiKeyWarning")}
                   </AlertDescription>
                 </Alert>
-              )}
-              <Button
-                variant="outline"
-                onClick={handleUpdateApiKey}
-                disabled={switchKey.isPending}
-                data-testid="supabase-update-api-key-button"
-              >
-                {t("integrations.supabase.updateApiKey")}
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                {t("integrations.supabase.updateApiKeyDescription")}
-              </p>
-            </div>
+                <Button
+                  variant="outline"
+                  onClick={handleUpdateApiKey}
+                  disabled={switchKey.isPending}
+                  data-testid="supabase-update-api-key-button"
+                >
+                  {t("integrations.supabase.updateApiKey")}
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  {t("integrations.supabase.updateApiKeyDescription")}
+                </p>
+              </div>
+            )}
 
             <Button variant="destructive" onClick={handleUnsetProject}>
               {t("integrations.supabase.disconnectProject")}
