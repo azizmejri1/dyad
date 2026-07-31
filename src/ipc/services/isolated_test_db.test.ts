@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createTempTestUser: vi.fn(),
   deleteTempTestUser: vi.fn().mockResolvedValue(undefined),
   checkRls: vi.fn().mockResolvedValue({ tablesWithoutRls: [] }),
+  checkAppSupabaseKey: vi.fn().mockResolvedValue({ kind: "ok" }),
   updateNeonEnvVars: vi.fn().mockResolvedValue(undefined),
   readEnvFileIfExists: vi.fn().mockResolvedValue(null),
   executeApp: vi.fn().mockResolvedValue(undefined),
@@ -44,6 +45,18 @@ vi.mock("../utils/supabase_test_user", () => ({
   deleteTempTestUser: mocks.deleteTempTestUser,
   checkRls: mocks.checkRls,
 }));
+// Only the check is stubbed — `buildAppKeyWarning` stays real so the assertions
+// below cover the message the user actually sees.
+vi.mock(
+  "../../supabase_admin/supabase_app_key_check",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../supabase_admin/supabase_app_key_check")
+      >();
+    return { ...actual, checkAppSupabaseKey: mocks.checkAppSupabaseKey };
+  },
+);
 vi.mock("../utils/app_env_var_utils", () => ({
   ENV_FILE_NAME: ".env.local",
   getEnvFilePath: ({ appPath }: { appPath: string }) => `${appPath}/.env.local`,
@@ -106,6 +119,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.runningApps.clear();
   mocks.checkRls.mockResolvedValue({ tablesWithoutRls: [] });
+  mocks.checkAppSupabaseKey.mockResolvedValue({ kind: "ok" });
   mocks.readEnvFileIfExists.mockResolvedValue(null);
   mocks.createTempTestUser.mockResolvedValue({
     userId: "user-1",
@@ -116,6 +130,44 @@ beforeEach(() => {
 });
 
 describe("prepareIsolatedTestDatabase — Supabase test-user path", () => {
+  // The test signs in through the app's own login UI, so a dead key in the
+  // app's generated client fails the test rather than setup. Surface it during
+  // setup instead of letting it look like broken login code.
+  it("warns when the app's Supabase client holds a disabled legacy key", async () => {
+    mocks.checkAppSupabaseKey.mockResolvedValue({ kind: "legacy-disabled" });
+
+    const prepared = await prepareIsolatedTestDatabase({
+      app: makeApp({
+        supabaseProjectId: "sb-1",
+        supabaseOrganizationSlug: "org-1",
+      }),
+      emit,
+      runtimeMode: "host",
+    });
+
+    expect(prepared.isolation.reason).toMatch(/signing in will fail/);
+    // Still runs — the key may not matter to every test.
+    expect(prepared.infraError).toBeUndefined();
+    expect(mocks.createTempTestUser).toHaveBeenCalled();
+  });
+
+  it("combines the app-key warning with the RLS warning", async () => {
+    mocks.checkRls.mockResolvedValue({ tablesWithoutRls: ["todos"] });
+    mocks.checkAppSupabaseKey.mockResolvedValue({ kind: "legacy-disabled" });
+
+    const prepared = await prepareIsolatedTestDatabase({
+      app: makeApp({
+        supabaseProjectId: "sb-1",
+        supabaseOrganizationSlug: "org-1",
+      }),
+      emit,
+      runtimeMode: "host",
+    });
+
+    expect(prepared.isolation.reason).toMatch(/Row-Level Security/);
+    expect(prepared.isolation.reason).toMatch(/signing in will fail/);
+  });
+
   it("creates a test user and returns credentials when RLS is fully enabled", async () => {
     const prepared = await prepareIsolatedTestDatabase({
       app: makeApp({

@@ -14,6 +14,10 @@ import {
   type TempTestUser,
 } from "../utils/supabase_test_user";
 import {
+  buildAppKeyWarning,
+  checkAppSupabaseKey,
+} from "../../supabase_admin/supabase_app_key_check";
+import {
   getEnvFilePath,
   readEnvFileIfExists,
   updateNeonEnvVars,
@@ -269,7 +273,19 @@ async function prepareSupabaseTestUserIsolation({
 
   // RLS gate (warn, don't refuse): surface unprotected tables to the user.
   const rls = await checkRls({ projectId, organizationSlug });
-  const warning = buildRlsWarning(rls);
+  // The test signs the isolated user in through the app's OWN login UI, so a
+  // dead key in the app's generated Supabase client fails the test rather than
+  // setup — which reads as "my login is broken" instead of "my key expired".
+  // Warn, don't refuse: the run is still worth attempting.
+  const appKeyStatus = await checkAppSupabaseKey({
+    appPath: getDyadAppPath(app.path),
+    projectId,
+    organizationSlug,
+  });
+  const warning = joinWarnings(
+    buildRlsWarning(rls),
+    buildAppKeyWarning(appKeyStatus),
+  );
 
   let testUser: TempTestUser | undefined;
   const teardown = async () => {
@@ -331,6 +347,12 @@ async function prepareSupabaseTestUserIsolation({
       teardown: NOOP_TEARDOWN,
     };
   }
+}
+
+/** Combine the setup warnings into one `reason`, dropping the empty ones. */
+function joinWarnings(...warnings: (string | undefined)[]): string | undefined {
+  const present = warnings.filter((warning): warning is string => !!warning);
+  return present.length > 0 ? present.join(" ") : undefined;
 }
 
 /** Build the user-facing RLS warning, or undefined when fully protected. */
