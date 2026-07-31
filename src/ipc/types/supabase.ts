@@ -123,6 +123,17 @@ export const supabaseContracts = {
     output: z.void(),
   }),
 
+  /**
+   * Rewrite the app's generated Supabase client to use the project's
+   * publishable key instead of the legacy `anon` key it was generated with.
+   * `updated` is false when there was nothing to switch.
+   */
+  switchAppToPublishableKey: defineContract({
+    channel: "supabase:switch-app-to-publishable-key",
+    input: z.object({ appId: z.number() }),
+    output: z.object({ updated: z.boolean() }),
+  }),
+
   // Test-only channel
   fakeConnectAndSetProject: defineContract({
     channel: "supabase:fake-connect-and-set-project",
