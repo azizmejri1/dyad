@@ -53,7 +53,7 @@ npm run init-precommit
 
 When you create a new git worktree for this repository, run `npm install` inside the new worktree before starting development. Each worktree has its own working directory and needs its dependencies installed there.
 
-Also run `npm install` in `testing/fake-llm-server/` before `npm run ts` in a fresh worktree. Otherwise the root type-check reports missing declarations for that package's local `express` and `cors` dependencies.
+Also run `npm install` in `testing/fake-llm-server/` before `npm run ts` **or `npm test`** in a fresh worktree. Without it the root type-check reports ~50 missing-declaration errors for that package's local `express`/`cors`, and roughly 60 Vitest files fail to collect with `Cannot find module 'git-http-mock-server/middleware'` — none of which are caused by your changes. If you see either symptom, install there first rather than debugging the diff.
 
 ## Pre-commit checks
 
