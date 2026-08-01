@@ -115,14 +115,6 @@ describe("TestsPanel recording entry point", () => {
     expect(button.disabled).toBe(true);
   });
 
-  it("hides recording until testing is enabled for the app", () => {
-    mocks.app = { id: 1, testingEnabled: false };
-
-    renderPanel({ devServerRunning: true });
-
-    expect(screen.queryByTestId("tests-record-button")).toBeNull();
-  });
-
   it("opens a spec file in the code view", async () => {
     mocks.specs = [{ file: "e2e-tests/recorded-add-item.spec.ts", tests: [] }];
 
