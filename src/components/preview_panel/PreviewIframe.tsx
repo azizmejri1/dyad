@@ -1574,6 +1574,11 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
                     <VisualEditingToolbar
                       selectedComponent={visualEditingSelectedComponent}
                       transport={previewTransport}
+                      previewWidth={
+                        deviceMode === "desktop"
+                          ? null
+                          : deviceWidthConfig[deviceMode]
+                      }
                       isDynamic={isDynamicComponent}
                       hasStaticText={hasStaticText}
                       hasImage={hasImage}

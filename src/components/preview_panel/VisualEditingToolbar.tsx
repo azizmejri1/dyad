@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { positionVisualEditingToolbar } from "./visualEditingToolbarPosition";
 import {
   Tooltip,
   TooltipTrigger,
@@ -60,6 +61,12 @@ const FONT_FAMILY_OPTIONS = [
 interface VisualEditingToolbarProps {
   selectedComponent: ComponentSelection | null;
   transport: PreviewTransport | null;
+  /**
+   * Rendered width of the preview surface, or null in desktop where it fills
+   * the container. Needed because the component coordinates are in the
+   * preview's space and the toolbar is positioned in the container's.
+   */
+  previewWidth: number | null;
   isDynamic: boolean;
   hasStaticText: boolean;
   hasImage: boolean;
@@ -70,6 +77,7 @@ interface VisualEditingToolbarProps {
 export function VisualEditingToolbar({
   selectedComponent,
   transport,
+  previewWidth,
   isDynamic,
   hasStaticText,
   hasImage,
@@ -77,6 +85,47 @@ export function VisualEditingToolbar({
   currentImageSrc,
 }: VisualEditingToolbarProps) {
   const coordinates = useAtomValue(currentComponentCoordinatesAtom);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  // The toolbar's own size and its container's are only knowable after layout,
+  // and both are needed to keep it on screen.
+  const [metrics, setMetrics] = useState<{
+    toolbar: { width: number; height: number };
+    container: { width: number; height: number };
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = toolbarRef.current;
+    if (!element) return;
+    const measure = () => {
+      // offsetParent is the `relative` preview container the toolbar is
+      // positioned against, so it is the right box to stay inside.
+      const parent = element.offsetParent as HTMLElement | null;
+      setMetrics({
+        toolbar: {
+          width: element.offsetWidth,
+          height: element.offsetHeight,
+        },
+        container: {
+          width: parent?.clientWidth ?? 0,
+          height: parent?.clientHeight ?? 0,
+        },
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    const parent = element.offsetParent as HTMLElement | null;
+    if (parent) observer.observe(parent);
+    return () => observer.disconnect();
+  }, [selectedComponent, coordinates != null]);
+
+  const position = positionVisualEditingToolbar({
+    coordinates: coordinates ?? { top: 0, left: 0, width: 0, height: 0 },
+    container: metrics?.container ?? { width: 0, height: 0 },
+    deviceWidth: previewWidth,
+    toolbar: metrics?.toolbar ?? { width: 0, height: 0 },
+  });
+  const measured = metrics !== null;
   const [currentMargin, setCurrentMargin] = useState({ x: "", y: "" });
   const [currentPadding, setCurrentPadding] = useState({ x: "", y: "" });
   const [currentBorder, setCurrentBorder] = useState({
@@ -331,15 +380,19 @@ export function VisualEditingToolbar({
 
   if (!selectedComponent || !coordinates) return null;
 
-  const toolbarTop = coordinates.top + coordinates.height + 4;
-  const toolbarLeft = coordinates.left;
-
   return (
     <div
+      ref={toolbarRef}
+      data-testid="visual-editing-toolbar"
+      data-placement={position.placement}
       className="absolute bg-[var(--background)] border border-[var(--border)] rounded-md shadow-lg z-50 flex flex-row items-center p-2 gap-1"
       style={{
-        top: `${toolbarTop}px`,
-        left: `${toolbarLeft}px`,
+        top: `${position.top}px`,
+        left: `${position.left}px`,
+        // Until it has been measured the computed position is a guess, so it is
+        // laid out invisibly for one frame rather than flashing in the wrong
+        // place.
+        visibility: measured ? "visible" : "hidden",
       }}
     >
       <Tooltip>
