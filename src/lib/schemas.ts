@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TestRunModeSchema } from "./testRunMode";
 import {
   isGoogleProviderSetup,
   isNonGoogleProviderSetup,
@@ -411,6 +412,9 @@ const BaseUserSettingsFields = {
   // Run button and the agent's run_tests tool share the same headed/serial
   // preference. Default (unset) is headless + serial.
   testHeaded: z.boolean().optional(),
+  // Supersedes testHeaded, which is kept so an existing headed user is not
+  // silently moved onto the screencast. See resolveTestRunMode.
+  testRunMode: TestRunModeSchema.optional(),
   testParallel: z.boolean().optional(),
   autoExpandPreviewPanel: z.boolean().optional(),
   enableChatEventNotifications: z.boolean().optional(),

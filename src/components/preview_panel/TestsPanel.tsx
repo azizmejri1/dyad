@@ -16,9 +16,17 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  MonitorPlay,
   Zap,
   ShieldCheck,
 } from "lucide-react";
+import {
+  nextTestRunMode,
+  resolveTestRunMode,
+  testRunModeDescription,
+  testRunModeLabel,
+  isHeadedMode,
+} from "@/lib/testRunMode";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
 import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 import { useCurrentAppUrl } from "@/hooks/useAppRun";
@@ -533,11 +541,11 @@ export function TestsPanel() {
   const hasSupabaseIsolation = hasSupabase && !!app?.supabaseOrganizationSlug;
 
   const [outputOpen, setOutputOpen] = useState(false);
-  // Headed/parallel are persisted in user settings (not local state) so the
+  // Run mode/parallel are persisted in user settings (not local state) so the
   // agent's run_tests tool honors the same choice the user makes here.
-  // When enabled, runs open a visible browser window so the user can watch the
-  // test drive the app, instead of running headless.
-  const headed = settings?.testHeaded ?? false;
+  // Headless, watched in Dyad's preview panel, or in a real browser window.
+  const runMode = resolveTestRunMode(settings ?? {});
+  const headed = isHeadedMode(runMode);
   // When enabled, a file's independent tests run concurrently instead of
   // serially (Playwright `--fully-parallel` with multiple workers).
   const parallel = settings?.testParallel ?? false;
@@ -915,27 +923,30 @@ export function TestsPanel() {
         )}
         {testingEnabled && specs.length > 0 && (
           <button
-            onClick={() => updateSettings({ testHeaded: !headed })}
+            onClick={() =>
+              updateSettings({ testRunMode: nextTestRunMode(runMode) })
+            }
             disabled={isRunning}
-            aria-pressed={headed}
-            title={
-              headed
-                ? "Headed: tests open a visible browser window"
-                : "Headless: tests run without a visible window"
-            }
-            aria-label={
-              headed ? "Switch to headless mode" : "Switch to headed mode"
-            }
+            title={testRunModeDescription(runMode)}
+            aria-label={`Test run mode: ${testRunModeLabel(runMode)}. Switch to ${testRunModeLabel(nextTestRunMode(runMode))}`}
+            data-testid="test-run-mode-toggle"
+            data-run-mode={runMode}
             className={cn(
               "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md cursor-pointer transition-colors",
-              headed
+              runMode !== "headless"
                 ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300 hover:bg-teal-200 dark:hover:bg-teal-900/60"
                 : "text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700",
               isRunning && "opacity-40 cursor-not-allowed",
             )}
           >
-            {headed ? <Eye size={14} /> : <EyeOff size={14} />}
-            {headed ? "Headed" : "Headless"}
+            {runMode === "watch" ? (
+              <MonitorPlay size={14} />
+            ) : runMode === "external" ? (
+              <Eye size={14} />
+            ) : (
+              <EyeOff size={14} />
+            )}
+            {testRunModeLabel(runMode)}
           </button>
         )}
         {isRunning ? (
