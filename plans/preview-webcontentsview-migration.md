@@ -6,7 +6,7 @@
 
 The request was to replace the preview `<iframe>` with an Electron `WebContentsView`, so that E2E tests can run in the preview panel. The planning team (PM / UX / Eng) converged on a different shape of the same goal: **the E2E unlock does not come from `WebContentsView` — it comes from the preview being a _separate WebContents_, which is an addressable CDP page target.** A hidden `BrowserWindow` provides that with none of the native-compositing cost.
 
-**Recommendation: keep the live preview on its iframe. Run tests in a hidden `BrowserWindow` and screencast it into the panel.** Ship a live Playwright step reporter first — it is independent of all of this, costs almost nothing, and delivers most of "watch your tests run" on its own.
+**Recommendation: keep the live preview on its iframe. Run tests in a hidden `BrowserWindow` and screencast it into the panel.** Ship a live Playwright step reporter first — it is independent of all of this, costs almost nothing, and delivers most of "watch your tests run" on its own. On top of that, a **synthetic cursor** driven by observed CDP input makes each step legible as an action rather than a diff (Phase 5, D9/D10).
 
 > ⚠️ This plan **diverges from the literal request**. Four clarifying questions went unanswered (see [Unanswered Questions](#unanswered-questions)); the plan proceeds on the team's assumptions. If any answer differs — especially "do you need to preview sites that refuse iframes?" — re-open [Decision D2](#decision-log).
 
@@ -37,6 +37,7 @@ The load-bearing constraint: **a `WebContentsView` is a native child view compos
 - **Filtered CDP endpoint** with a per-run token, exposed to the user's Playwright process as `DYAD_CDP_ENDPOINT`.
 - **Screencast into the preview panel** (`Page.startScreencast` → `<canvas>`/`<img>` in existing DOM).
 - **Test-drive mode UI**: run bar, step rail, "Tests are driving this preview" chip, pause-on-failure with `[Fix with AI]`.
+- **Synthetic cursor** — a drawn pointer that travels between the elements each step acts on, driven by real `Input.dispatchMouseEvent` coordinates observed at the proxy (see D9).
 - **Three-way run toggle**: Headless · **Watch in Dyad** (new default) · External window (retained — principle 5).
 - **`iframeEpoch` → `previewSurfaceId`** prerequisite refactor.
 - **Transport-interface refactor** of `previewIframeRefAtom` / `VisualEditingToolbar` / `useShortcut` — done against the iframe.
@@ -85,6 +86,24 @@ The load-bearing constraint: **a `WebContentsView` is a native child view compos
 - **Pause-on-failure** — stop updating the canvas. No freeze machinery, no capture race.
 - **Fidelity** — JPEG @ ~15fps is fine while watching (slow-mo already runs below 60fps); switch to `format: "png"`, device-scale-matched, while paused.
 
+#### The synthetic cursor
+
+**Playwright never moves the OS cursor.** It synthesizes input straight into the renderer via CDP `Input.dispatchMouseEvent`; the user's real pointer never moves, and even a headed run shows buttons depressing with nothing visibly travelling. It also teleports — `locator.click()` sends one `mouseMoved` to the element centre, then press, then release, with no intermediate positions.
+
+So the cursor the user sees is **entirely drawn by Dyad**. That is a feature: there is no real pointer to stay faithful to, so path, easing, and speed are chosen purely for legibility.
+
+- **Coordinates come free.** The proxy already sits in the CDP path and sees every `Input.dispatchMouseEvent` go by with exact viewport CSS pixels. **Do not** parse selectors out of reporter step titles and re-resolve them — that is string-matching against a format Playwright does not guarantee, and it can point at a different element than the one actually hit.
+- **Hold the click so the motion means something.** Naively animating a 300ms glide loses the race: `mousePressed` follows `mouseMoved` immediately, so the button clicks itself before the cursor arrives. Because the proxy is a man-in-the-middle, it can **delay forwarding the `mousePressed` frame** until the animation lands — Playwright is `await`ing that command anyway. Cursor arrives, *then* the click. This is only possible because we own the proxy, and it is the strongest argument for the proxy design.
+- **The target's `:hover` is real.** Playwright genuinely moves to the element centre before pressing, so the button lights up on its own in the screencast exactly as the drawn cursor arrives. Free reinforcement.
+- **Render**: arrow with eased motion (travel time scaled to distance, brief settle before the press), faint trail from the previous position, click ripple sized to `clickCount`, and a small label riding the cursor with the step title (`click "Sign in"`) tying the motion to the step rail.
+- **Non-mouse steps need a second path.** `fill()` focuses and then uses `Input.insertText` — no mouse event, no coordinates. Fall back to reading `document.activeElement`'s box over CDP when a text step begins; workable, less clean than the mouse path.
+
+### Draw it inside the guest
+
+Two places the cursor could live. Over the screencast canvas in Dyad's DOM is easier — `Page.screencastFrame` metadata (`pageScaleFactor`, `deviceWidth`, `scrollOffsetX/Y`) gives the mapping per frame — but it **only works in screencast mode**. Inside the guest page (`pointer-events: none`, closed shadow root) it renders in the page's own compositor and therefore survives **both** screencast and a native `WebContentsView`.
+
+Given U2 is unresolved, **build it inside the guest.** Dyad already ships `worker/dyad-component-selector-client.js` (23KB) and `worker/dyad-visual-editor-client.js` (9.3KB) drawing exactly this kind of overlay, so the pattern and the injection plumbing exist.
+
 ### Accessibility
 
 - `aria-live="polite"` announces each step transition, mirroring the existing counter in `TestsPanel.tsx`.
@@ -118,6 +137,8 @@ The load-bearing constraint: **a `WebContentsView` is a native child view compos
 
 So: launch with `--remote-debugging-port=0`, read the ephemeral port, and have main host a **~200-line filtering WS proxy** on its own loopback port with a per-run random token in the path. It forwards frames, drops `Target.attachedToTarget` for non-preview targets, and rejects `Target.attachToTarget`/`Target.createTarget` for others. The user's test process only ever learns `ws://127.0.0.1:<proxyPort>/<token>`.
 
+The proxy earns its keep twice: besides filtering, it is the only component that sees the raw input stream, which is what makes the synthetic cursor exact rather than inferred. It has two jobs there — **observe** `Input.dispatchMouseEvent` coordinates, and **hold** the `mousePressed` frame while the cursor animates. The hold must be bounded, opt-in to Watch-in-Dyad, and never applied on the headless path.
+
 **Residual risk, stated plainly for security review**: the real Chromium debugging port stays open on loopback for the process lifetime, and `/json/*` on it discloses the renderer's WS GUID to any local process. The proxy protects the _user's tests_ from seeing Dyad's renderer; it does **not** protect Dyad from a hostile local process, and the switch is launch-time-only. Mitigations: (a) accept it — Chrome ships this posture; or (b) **spawn a dedicated hidden helper Electron process** owning the debugging port and hosting only the preview WebContents, closing the RCE surface entirely. **(b) is the team's recommendation; this decision is unanswered — see U3.**
 
 ### Components Affected
@@ -130,7 +151,8 @@ So: launch with `--remote-debugging-port=0`, read the ephemeral port, and have m
 | `src/ipc/handlers/tests_handlers.ts:339` | Add the Dyad step reporter to the `--reporter` list |
 | `src/ipc/handlers/tests_handlers.ts:176, 370` | Filter `@@DYAD_STEP` lines out of the console stream, route to the step rail |
 | **new** `scripts/dyad-step-reporter.cjs` | Emits `\n@@DYAD_STEP {json}\n`; written into the app dir, gitignored |
-| **new** `src/main/preview_cdp_proxy.ts` | Filtering WS proxy + token minting |
+| **new** `src/main/preview_cdp_proxy.ts` | Filtering WS proxy + token minting; `Input.dispatchMouseEvent` observation + bounded `mousePressed` hold |
+| **new** `worker/dyad-test-cursor-client.js` | Guest-injected synthetic cursor (closed shadow root, `pointer-events: none`); follows the two existing client scripts |
 | **new** `src/main/preview_view_registry.ts` | Hidden-window lifecycle, screencast frames → renderer |
 | `src/components/preview_panel/TestsPanel.tsx:918-938` | `testHeaded` toggle → three-way Headless / Watch in Dyad / External |
 | `src/components/preview_panel/PreviewIframe.tsx` | Test-drive mode: run bar replaces toolbar row, step rail, failure bar, screencast canvas |
@@ -196,7 +218,19 @@ The single highest-value / lowest-cost item in the proposal, and **completely in
 - [ ] Pause-on-failure + failure bar + `[Fix with AI]` via existing `askAiToFix`
 - [ ] Retire the browser-download path **on the CDP path only**; keep External-window mode working
 
-### Phase 5: Visual-editing toolbar fix (independent — see D5)
+### Phase 5: Synthetic cursor (see D9)
+
+Depends on Phase 4's screencast and Phase 1's step rail (for step titles). Ships behind the Watch-in-Dyad toggle.
+
+- [ ] Observe `Input.dispatchMouseEvent` at the proxy; emit `{type, x, y, button, clickCount}` to the renderer
+- [ ] `worker/dyad-test-cursor-client.js`: closed shadow root, `pointer-events: none`, eased motion + trail + click ripple
+- [ ] Bounded `mousePressed` hold in the proxy — configurable, default ~250ms, **hard-capped**, headless path untouched
+- [ ] Step-title label riding the cursor, sourced from the Phase 1 reporter stream
+- [ ] `document.activeElement` box fallback for `fill()` / keyboard steps
+- [ ] Tear down the cursor around any `Page.captureScreenshot` so `toHaveScreenshot()` never sees it
+- [ ] Verify during the spike whether `Overlay.*` primitives are excluded from `Page.captureScreenshot` — if so, prefer them as the substrate over injected DOM
+
+### Phase 6: Visual-editing toolbar fix (independent — see D5)
 
 - [ ] Dock the toolbar under the preview toolbar; draw the connector inside the guest via `worker/dyad-component-selector-client.js`
 
@@ -209,6 +243,8 @@ The single highest-value / lowest-cost item in the proposal, and **completely in
 - [ ] **E2E (Dyad's suite)** — one broad spec per `rules/e2e-testing.md`: run a test in Watch-in-Dyad mode, assert step rail advances and the failure bar appears. Keep a DOM placeholder `<div data-testid="preview-view-slot" data-device-width="375">` so layout assertions stay in the renderer
 - [ ] **Regression gate** — all 11 `contentFrame()` files stay green; live-preview specs should need **zero** changes under this plan
 - [ ] **Manual** — bare `npx playwright test` in a generated app with Dyad closed
+- [ ] **Regression gate (cursor)** — the same spec must produce identical pass/fail and identical `toHaveScreenshot()` results in Headless and in Watch-in-Dyad. If watch mode changes a verdict, the hold is too long or the cursor leaked into a capture
+- [ ] **Unit** — proxy hold is bounded and is a no-op on the headless path
 
 ## Risks & Mitigations
 
@@ -221,6 +257,9 @@ The single highest-value / lowest-cost item in the proposal, and **completely in
 | Screencast fidelity/latency disappoints | L | L | User is watching, not interacting; PNG device-scale-matched while paused |
 | Scope creeps back toward full `WebContentsView` migration | M | H | D2 records the bar: it needs a driver of its own |
 | `Browser.*` domain gaps if anyone revisits a `webContents.debugger` relay | L | H | Explicitly rejected in this plan; re-read `crBrowser.js:66-80` before reconsidering |
+| **Cursor hold inflates run time into test timeouts** — ~250ms × 50 actions ≈ 12s against a 30s default | M | **H** | Hard-cap the hold; headless untouched; regression gate asserts watch mode never changes a verdict; surface "this run timed out only in watch mode" in the UI rather than reporting a failure |
+| **Guest-drawn cursor appears in `toHaveScreenshot()`** | M | H | Tear down around `Page.captureScreenshot`; prefer `Overlay.*` substrate if the spike confirms it is excluded from captures |
+| Cursor path implies causality that did not happen (glides over a nav item that never received a hover) | M | L | Accepted — D10. Keep paths short and direct; never interpolate into the real input stream |
 
 ## Unanswered Questions
 
@@ -229,13 +268,13 @@ Four questions were put to the human and went unanswered. The plan proceeds on t
 - **U1 — Approach.** _Assumed: hidden `BrowserWindow` + screencast._ If the answer is "full migration as asked," the UX regression inventory below becomes the plan.
 - **U2 — Other drivers.** _Assumed: E2E only._ **The one answer that flips the recommendation is "we need to preview sites that refuse iframes"** — OAuth popups, Stripe/Auth0 redirects, third-party embeds sending `X-Frame-Options` / `frame-ancestors` / COOP. An iframe cannot solve that at any price, and it would justify the full migration on its own.
 - **U3 — CDP security posture.** _Assumed: dedicated helper process._ Blocks Phase 3's design; the residual-risk paragraph above is written for whoever owns this call.
-- **U4 — Visual-editing toolbar.** _Assumed: separate phase (Phase 5), not blocking._
+- **U4 — Visual-editing toolbar.** _Assumed: separate phase (Phase 6), not blocking._
 
 ### Deferred: the full-migration regression inventory
 
 UX priced 18 regressions against a full `WebContentsView` migration. Kept here so the work is costed if U2 reopens it.
 
-**Blocks ship (8)** — error banner → layout sibling; `PreviewLoadingScreen` → `capturePage()`-and-blur (today it blurs the _last painted app frame_; a native view leaves an opaque card over a hole); 12+ tooltips and 3 downward menus occluded (they portal to `document.body`); panel-resize desync, including `chat.tsx:150,197` `transition-all duration-100` on panel width — **a CSS transition a native view physically cannot follow**; focus root breaks Tab traversal and the `⌘⇧C` relay; right-click menu **lost entirely** (`main.ts:981` installs it on the _window's_ webContents); navigation guards after `sandbox=` disappears (`PreviewIframe.tsx:1544`); 51 `contentFrame()` sites.
+**Blocks ship (8)** — error banner → layout sibling; `PreviewLoadingScreen` → `capturePage()`-and-blur (today it blurs the _last painted app frame_; a native view leaves an opaque card over a hole); 12+ tooltips and 3 downward menus occluded (they portal to `document.body`); panel-resize desync, including `chat.tsx:150,199` `transition-all duration-100` on panel width — **a CSS transition a native view physically cannot follow**; focus root breaks Tab traversal and the `⌘⇧C` relay; right-click menu **lost entirely** (`main.ts:981` installs it on the _window's_ webContents); navigation guards after `sandbox=` disappears (`PreviewIframe.tsx:1544`); 51 `contentFrame()` sites.
 
 **Before default-on (8)** — docked visual-editing toolbar; window move / fullscreen / DPI; ancestor scroll (`PreviewPanel.tsx:175` is `flex-1 overflow-y-auto`, so a native view stays pinned while chrome scrolls under it); border radius; dark-mode flash (a fresh WebContents paints white); device-mode transition; multi-window view keying; Annotator hide.
 
@@ -253,6 +292,8 @@ UX priced 18 regressions against a full `WebContentsView` migration. Kept here s
 - **D6 — The Chromium-download argument is weaker than first claimed.** Re-reading `playwright_bootstrap.ts:149-204`: Windows checks Chrome then **Edge** (preinstalled on Win10+) → download essentially always avoided. macOS → only Chrome-less Macs. Linux (`:196-203`) deliberately excludes distro `chromium` → high download rate, but a small share of users. **A minority hit it.** The better argument is determinism: `channel: "chrome"` drives the user's auto-updating browser (the test environment can change overnight), corporate `RemoteDebuggingAllowed=false` breaks Playwright outright, and headed runs pop the user's real browser. A pinned Electron-Chromium is more deterministic than either.
 - **D7 — `plans/better-e2e.md` is a prerequisite, not a competitor.** Different budget (internal DX vs. user-facing), but `visual_editing.spec.ts` is both its top flake source and a `contentFrame()` consumer.
 - **D8 — Reject a `webContents.debugger`-only CDP relay.** It would require synthesizing the entire Browser + Target domain (`crBrowser.js:66-80`), and every Playwright minor can add a browser-domain call you didn't implement.
+- **D9 — Drive the cursor from observed CDP input, not from parsed step titles.** The proxy already sees every `Input.dispatchMouseEvent` with exact viewport coordinates. Re-resolving a selector scraped from a reporter title is string-matching against an unguaranteed format and can point at a different element than the one the test actually hit. Corollary: the proxy holds `mousePressed` for the animation duration so the cursor arrives *before* the click — the ordering is the entire point of the feature.
+- **D10 — The cursor is a presentation layer and must never touch the input stream.** The animated path is a dramatization: the page received one jump, not twenty interpolated moves. Expanding one `mouseMoved` into many at the proxy would make the page fire hover handlers along the path and make watch-mode runs behave differently from headless ones. **Accept that the path is narrative and keep the input stream byte-identical.** The one genuinely real cue — the target's own `:hover` firing as Playwright moves to the element centre — is free and does the heavy lifting.
 
 ---
 
