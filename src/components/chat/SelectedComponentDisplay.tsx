@@ -1,6 +1,6 @@
 import {
   selectedComponentsPreviewAtom,
-  previewIframeRefAtom,
+  previewTransportAtom,
   visualEditingSelectedComponentAtom,
 } from "@/atoms/previewAtoms";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -15,7 +15,7 @@ export function SelectedComponentsDisplay() {
   const [selectedComponents, setSelectedComponents] = useAtom(
     selectedComponentsPreviewAtom,
   );
-  const previewIframeRef = useAtomValue(previewIframeRefAtom);
+  const previewTransport = useAtomValue(previewTransportAtom);
   const setVisualEditingSelectedComponent = useSetAtom(
     visualEditingSelectedComponentAtom,
   );
@@ -26,27 +26,17 @@ export function SelectedComponentsDisplay() {
     setSelectedComponents(newComponents);
     setVisualEditingSelectedComponent(null);
 
-    // Remove the specific overlay from the iframe
-    if (previewIframeRef?.contentWindow) {
-      previewIframeRef.contentWindow.postMessage(
-        {
-          type: "remove-dyad-component-overlay",
-          componentId: componentToRemove.id,
-        },
-        "*",
-      );
-    }
+    // Remove the specific overlay from the preview
+    previewTransport?.post({
+      type: "remove-dyad-component-overlay",
+      componentId: componentToRemove.id,
+    });
   };
 
   const handleClearAll = () => {
     setSelectedComponents([]);
     setVisualEditingSelectedComponent(null);
-    if (previewIframeRef?.contentWindow) {
-      previewIframeRef.contentWindow.postMessage(
-        { type: "clear-dyad-component-overlays" },
-        "*",
-      );
-    }
+    previewTransport?.post({ type: "clear-dyad-component-overlays" });
   };
 
   if (!selectedComponents || selectedComponents.length === 0) {

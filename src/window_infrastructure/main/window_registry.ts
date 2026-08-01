@@ -22,7 +22,7 @@ interface MutableCapabilityLease {
   kind: "screenshot";
   appId: number;
   holderWindowSessionId: WindowSessionId;
-  iframeEpoch: number;
+  previewSurfaceId: number;
   lossPolicy: "retry" | "settle";
   active: boolean;
   reason: CapabilityLeaseLossReason | null;
@@ -165,17 +165,22 @@ export class WindowRegistry {
   ): void {
     const record = this.recordForSession(windowSessionId);
     if (!record) return;
-    const previousEpoch = record.screenshotCapabilities.get(capability.appId);
-    record.screenshotCapabilities.set(capability.appId, capability.iframeEpoch);
+    const previousSurfaceId = record.screenshotCapabilities.get(
+      capability.appId,
+    );
+    record.screenshotCapabilities.set(
+      capability.appId,
+      capability.previewSurfaceId,
+    );
     const lease = this.activeLeaseByCapability.get(
       this.capabilityKey(capability.kind, capability.appId),
     );
     if (
       lease?.holderWindowSessionId === windowSessionId &&
-      previousEpoch !== undefined &&
-      previousEpoch !== capability.iframeEpoch
+      previousSurfaceId !== undefined &&
+      previousSurfaceId !== capability.previewSurfaceId
     ) {
-      this.revokeLease(lease, "iframe-epoch-changed");
+      this.revokeLease(lease, "preview-surface-changed");
     }
   }
 
@@ -221,7 +226,7 @@ export class WindowRegistry {
       kind: "screenshot",
       appId: request.appId,
       holderWindowSessionId: holder.sessionId,
-      iframeEpoch: holder.screenshotCapabilities.get(request.appId)!,
+      previewSurfaceId: holder.screenshotCapabilities.get(request.appId)!,
       lossPolicy: request.lossPolicy,
       active: true,
       reason: null,
@@ -332,7 +337,7 @@ export class WindowRegistry {
       kind: lease.kind,
       appId: lease.appId,
       holderWindowSessionId: lease.holderWindowSessionId,
-      iframeEpoch: lease.iframeEpoch,
+      previewSurfaceId: lease.previewSurfaceId,
       lossPolicy: lease.lossPolicy,
       isActive: () => lease.active,
       lossReason: () => lease.reason,

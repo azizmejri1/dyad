@@ -1,4 +1,5 @@
 import { ComponentSelection, VisualEditingChange } from "@/ipc/types";
+import type { PreviewTransport } from "@/preview_iframe/transport";
 import { atom } from "jotai";
 
 export const selectedComponentsPreviewAtom = atom<ComponentSelection[]>([]);
@@ -13,7 +14,7 @@ export const currentComponentCoordinatesAtom = atom<{
   height: number;
 } | null>(null);
 
-export const previewIframeRefAtom = atom<HTMLIFrameElement | null>(null);
+export const previewTransportAtom = atom<PreviewTransport | null>(null);
 
 export const annotatorModeAtom = atom<boolean>(false);
 

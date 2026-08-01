@@ -50,7 +50,7 @@ export interface PresentationRouteRequest {
 export const ScreenshotCapabilitySchema = z.object({
   kind: z.literal("screenshot"),
   appId: z.number().int().positive(),
-  iframeEpoch: z.number().int().nonnegative(),
+  previewSurfaceId: z.number().int().nonnegative(),
 });
 export type ScreenshotCapability = z.infer<typeof ScreenshotCapabilitySchema>;
 
@@ -65,7 +65,7 @@ export interface WindowCapabilityRequest {
 
 export type CapabilityLeaseLossReason =
   | "window-destroyed"
-  | "iframe-epoch-changed"
+  | "preview-surface-changed"
   | "capability-withdrawn";
 
 export interface WindowCapabilityLease {
@@ -73,7 +73,7 @@ export interface WindowCapabilityLease {
   kind: "screenshot";
   appId: number;
   holderWindowSessionId: WindowSessionId;
-  iframeEpoch: number;
+  previewSurfaceId: number;
   lossPolicy: CapabilityLossPolicy;
   isActive(): boolean;
   lossReason(): CapabilityLeaseLossReason | null;

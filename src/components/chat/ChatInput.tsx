@@ -69,7 +69,7 @@ import { QuestionnaireInput } from "./QuestionnaireInput";
 import { QueuedMessagesList } from "./QueuedMessagesList";
 import {
   selectedComponentsPreviewAtom,
-  previewIframeRefAtom,
+  previewTransportAtom,
   visualEditingSelectedComponentAtom,
   currentComponentCoordinatesAtom,
   pendingVisualChangesAtom,
@@ -186,7 +186,7 @@ export function ChatInput({ chatId }: { chatId?: number }) {
   const [selectedComponents, setSelectedComponents] = useAtom(
     selectedComponentsPreviewAtom,
   );
-  const previewIframeRef = useAtomValue(previewIframeRefAtom);
+  const previewTransport = useAtomValue(previewTransportAtom);
   const setVisualEditingSelectedComponent = useSetAtom(
     visualEditingSelectedComponentAtom,
   );
@@ -385,19 +385,14 @@ export function ChatInput({ chatId }: { chatId?: number }) {
     setSelectedComponents([]);
     sendPreviewIframeEvent({ type: "PICKER_DEACTIVATED" });
     setVisualEditingSelectedComponent(null);
-    // Clear overlays in the preview iframe
-    if (previewIframeRef?.contentWindow) {
-      previewIframeRef.contentWindow.postMessage(
-        { type: "clear-dyad-component-overlays" },
-        "*",
-      );
-    }
+    // Clear overlays in the preview
+    previewTransport?.post({ type: "clear-dyad-component-overlays" });
   }, [
     setInputValue,
     setSelectedComponents,
     sendPreviewIframeEvent,
     setVisualEditingSelectedComponent,
-    previewIframeRef,
+    previewTransport,
   ]);
 
   // Shared cleanup for exiting queued message editing state
@@ -891,11 +886,7 @@ export function ChatInput({ chatId }: { chatId?: number }) {
 
           {userBudget ? (
             <VisualEditingChangesDialog
-              iframeRef={
-                previewIframeRef
-                  ? { current: previewIframeRef }
-                  : { current: null }
-              }
+              transport={previewTransport}
               onReset={() => {
                 // Exit component selection mode and visual editing
                 setSelectedComponents([]);

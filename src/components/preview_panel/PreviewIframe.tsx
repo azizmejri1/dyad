@@ -5,9 +5,11 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { createIframeTransport } from "@/preview_iframe/transport";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -48,7 +50,7 @@ import {
   selectedComponentsPreviewAtom,
   visualEditingSelectedComponentAtom,
   currentComponentCoordinatesAtom,
-  previewIframeRefAtom,
+  previewTransportAtom,
   annotatorModeAtom,
   screenshotDataUrlAtom,
   pendingVisualChangesAtom,
@@ -237,8 +239,14 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const setCurrentComponentCoordinates = useSetAtom(
     currentComponentCoordinatesAtom,
   );
-  const setPreviewIframeRef = useSetAtom(previewIframeRefAtom);
+  const setPreviewTransport = useSetAtom(previewTransportAtom);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Stable across renders: it reads iframeRef lazily rather than capturing the
+  // element, so it stays valid across iframe remounts.
+  const previewTransport = useMemo(
+    () => createIframeTransport(() => iframeRef.current),
+    [],
+  );
   const componentMessageHandlerRef = useRef<(event: MessageEvent) => void>(
     () => undefined,
   );
@@ -554,10 +562,11 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
     };
   }, [selectedAppId]);
 
-  // Update iframe ref atom
+  // Publish the preview transport
   useEffect(() => {
-    setPreviewIframeRef(iframeRef.current);
-  }, [iframeRef.current, setPreviewIframeRef]);
+    setPreviewTransport(previewTransport);
+    return () => setPreviewTransport(null);
+  }, [previewTransport, setPreviewTransport]);
 
   // Send pro mode status to iframe
   useEffect(() => {
@@ -957,7 +966,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
     { shift: true, ctrl: !isMac, meta: isMac },
     handleActivateComponentSelector,
     isComponentSelectorInitialized,
-    iframeRef,
+    previewTransport,
   );
 
   // Function to navigate back
@@ -1564,7 +1573,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
                   selectedAppId && (
                     <VisualEditingToolbar
                       selectedComponent={visualEditingSelectedComponent}
-                      iframeRef={iframeRef}
+                      transport={previewTransport}
                       isDynamic={isDynamicComponent}
                       hasStaticText={hasStaticText}
                       hasImage={hasImage}

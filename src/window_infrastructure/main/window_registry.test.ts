@@ -102,7 +102,7 @@ describe("WindowRegistry", () => {
     expect(registry.routePresentation({ effect: "ordinary" })).toBe(second);
   });
 
-  it("revokes screenshot leases on iframe epoch changes and destruction", () => {
+  it("revokes screenshot leases on preview surface changes and destruction", () => {
     const registry = new WindowRegistry();
     const windowSession = session();
     const renderer = endpoint(1);
@@ -110,7 +110,7 @@ describe("WindowRegistry", () => {
     registry.advertiseScreenshotCapability(windowSession, {
       kind: "screenshot",
       appId: 7,
-      iframeEpoch: 1,
+      previewSurfaceId: 1,
     });
     const retryLease = registry.claimCapability({
       kind: "screenshot",
@@ -122,10 +122,10 @@ describe("WindowRegistry", () => {
     registry.advertiseScreenshotCapability(windowSession, {
       kind: "screenshot",
       appId: 7,
-      iframeEpoch: 2,
+      previewSurfaceId: 2,
     });
     expect(retryLease?.isActive()).toBe(false);
-    expect(retryLease?.lossReason()).toBe("iframe-epoch-changed");
+    expect(retryLease?.lossReason()).toBe("preview-surface-changed");
     expect(retryLease?.shouldRetry()).toBe(true);
 
     const settleLease = registry.claimCapability({

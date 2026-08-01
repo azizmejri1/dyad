@@ -20,6 +20,7 @@ import { NumberInput } from "@/components/ui/NumberInput";
 import { rgbToHex, processNumericValue } from "@/utils/style-utils";
 import { ImageSwapPopover, type ImageUploadData } from "./ImageSwapPopover";
 import { mergePendingChange } from "@/ipc/types/visual-editing";
+import type { PreviewTransport } from "@/preview_iframe/transport";
 
 const FONT_WEIGHT_OPTIONS = [
   { value: "", label: "Default" },
@@ -58,7 +59,7 @@ const FONT_FAMILY_OPTIONS = [
 
 interface VisualEditingToolbarProps {
   selectedComponent: ComponentSelection | null;
-  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  transport: PreviewTransport | null;
   isDynamic: boolean;
   hasStaticText: boolean;
   hasImage: boolean;
@@ -68,7 +69,7 @@ interface VisualEditingToolbarProps {
 
 export function VisualEditingToolbar({
   selectedComponent,
-  iframeRef,
+  transport,
   isDynamic,
   hasStaticText,
   hasImage,
@@ -107,15 +108,10 @@ export function VisualEditingToolbar({
     );
     setVisualEditingSelectedComponent(null);
 
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "remove-dyad-component-overlay",
-          componentId: selectedComponent.id,
-        },
-        "*",
-      );
-    }
+    transport?.post({
+      type: "remove-dyad-component-overlay",
+      componentId: selectedComponent.id,
+    });
   };
 
   const sendStyleModification = (styles: {
@@ -126,26 +122,18 @@ export function VisualEditingToolbar({
     backgroundColor?: string;
     text?: { fontSize?: string; fontWeight?: string; color?: string };
   }) => {
-    if (!iframeRef.current?.contentWindow || !selectedComponent) return;
+    if (!transport?.isReady() || !selectedComponent) return;
 
-    iframeRef.current.contentWindow.postMessage(
-      {
-        type: "modify-dyad-component-styles",
-        data: {
-          elementId: selectedComponent.id,
-          runtimeId: selectedComponent.runtimeId,
-          styles,
-        },
+    transport.post({
+      type: "modify-dyad-component-styles",
+      data: {
+        elementId: selectedComponent.id,
+        runtimeId: selectedComponent.runtimeId,
+        styles,
       },
-      "*",
-    );
+    });
 
-    iframeRef.current.contentWindow.postMessage(
-      {
-        type: "update-dyad-overlay-positions",
-      },
-      "*",
-    );
+    transport.post({ type: "update-dyad-overlay-positions" });
 
     setPendingChanges((prev) => {
       const updated = new Map(prev);
@@ -184,19 +172,16 @@ export function VisualEditingToolbar({
   };
 
   const getCurrentElementStyles = () => {
-    if (!iframeRef.current?.contentWindow || !selectedComponent) return;
+    if (!transport?.isReady() || !selectedComponent) return;
 
     try {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "get-dyad-component-styles",
-          data: {
-            elementId: selectedComponent.id,
-            runtimeId: selectedComponent.runtimeId,
-          },
+      transport.post({
+        type: "get-dyad-component-styles",
+        data: {
+          elementId: selectedComponent.id,
+          runtimeId: selectedComponent.runtimeId,
         },
-        "*",
-      );
+      });
     } catch (error) {
       console.error("Failed to get element styles:", error);
     }
@@ -209,16 +194,10 @@ export function VisualEditingToolbar({
   }, [selectedComponent]);
 
   useEffect(() => {
-    if (coordinates && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "update-component-coordinates",
-          coordinates,
-        },
-        "*",
-      );
+    if (coordinates) {
+      transport?.post({ type: "update-component-coordinates", coordinates });
     }
-  }, [coordinates, iframeRef]);
+  }, [coordinates, transport]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -317,19 +296,16 @@ export function VisualEditingToolbar({
   };
 
   const handleImageSwap = (newSrc: string, uploadData?: ImageUploadData) => {
-    // 1. Send preview to iframe
-    if (iframeRef.current?.contentWindow && selectedComponent) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "modify-dyad-image-src",
-          data: {
-            elementId: selectedComponent.id,
-            runtimeId: selectedComponent.runtimeId,
-            src: uploadData ? uploadData.base64Data : newSrc,
-          },
+    // 1. Send preview to the app
+    if (selectedComponent) {
+      transport?.post({
+        type: "modify-dyad-image-src",
+        data: {
+          elementId: selectedComponent.id,
+          runtimeId: selectedComponent.runtimeId,
+          src: uploadData ? uploadData.base64Data : newSrc,
         },
-        "*",
-      );
+      });
     }
 
     // 2. Store in pending changes

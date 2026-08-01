@@ -1,11 +1,12 @@
 import { useEffect } from "react";
+import type { PreviewTransport } from "@/preview_iframe/transport";
 
 export function useShortcut(
   key: string,
   modifiers: { ctrl?: boolean; shift?: boolean; meta?: boolean },
   callback: () => void,
   isComponentSelectorInitialized: boolean,
-  iframeRef?: React.RefObject<HTMLIFrameElement | null>,
+  transport?: PreviewTransport | null,
 ): void {
   useEffect(() => {
     const isModifierActive = (modKey: boolean | undefined, eventKey: boolean) =>
@@ -55,8 +56,8 @@ export function useShortcut(
     };
 
     const handleMessageEvent = (event: MessageEvent) => {
-      // Only handle messages from our iframe
-      if (event.source !== iframeRef?.current?.contentWindow) {
+      // Only handle messages from our preview surface
+      if (!transport?.matchesSource(event.source)) {
         return;
       }
 
@@ -74,5 +75,5 @@ export function useShortcut(
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("message", handleMessageEvent);
     };
-  }, [key, modifiers, callback, isComponentSelectorInitialized, iframeRef]);
+  }, [key, modifiers, callback, isComponentSelectorInitialized, transport]);
 }

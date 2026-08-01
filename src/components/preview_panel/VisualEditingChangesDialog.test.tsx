@@ -10,6 +10,7 @@ import type { PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
 import { pendingVisualChangesAtom } from "@/atoms/previewAtoms";
+import { createIframeTransport } from "@/preview_iframe/transport";
 import { VisualEditingChangesDialog } from "./VisualEditingChangesDialog";
 
 const mocks = vi.hoisted(() => ({
@@ -69,14 +70,14 @@ describe("VisualEditingChangesDialog", () => {
 
     const iframe = document.createElement("iframe");
     document.body.appendChild(iframe);
-    const iframeRef = { current: iframe };
+    const transport = createIframeTransport(() => iframe);
     const Wrapper = ({ children }: PropsWithChildren) => (
       <Provider store={store}>{children}</Provider>
     );
 
     const view = render(
       <VisualEditingChangesDialog
-        iframeRef={iframeRef}
+        transport={transport}
         onReset={() => undefined}
       />,
       { wrapper: Wrapper },
@@ -99,7 +100,7 @@ describe("VisualEditingChangesDialog", () => {
 
     view.rerender(
       <VisualEditingChangesDialog
-        iframeRef={iframeRef}
+        transport={transport}
         onReset={() => undefined}
       />,
     );

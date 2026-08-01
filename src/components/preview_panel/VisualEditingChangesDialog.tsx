@@ -6,15 +6,16 @@ import { Check, X } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { showError, showSuccess } from "@/lib/toast";
 import { selectedAppIdAtom } from "@/atoms/appAtoms";
+import type { PreviewTransport } from "@/preview_iframe/transport";
 
 interface VisualEditingChangesDialogProps {
   onReset?: () => void;
-  iframeRef?: React.RefObject<HTMLIFrameElement | null>;
+  transport?: PreviewTransport | null;
 }
 
 export function VisualEditingChangesDialog({
   onReset,
-  iframeRef,
+  transport,
 }: VisualEditingChangesDialogProps) {
   const [pendingChanges, setPendingChanges] = useAtom(pendingVisualChangesAtom);
   const selectedAppId = useAtomValue(selectedAppIdAtom);
@@ -106,7 +107,7 @@ export function VisualEditingChangesDialog({
     try {
       const changesToSave = Array.from(pendingChanges.values());
 
-      if (iframeRef?.current?.contentWindow) {
+      if (transport?.isReady()) {
         // Reset state for new request
         setAllResponsesReceived(false);
         expectedResponsesRef.current.clear();
@@ -119,13 +120,10 @@ export function VisualEditingChangesDialog({
 
         // Request text content for each component
         for (const change of changesToSave) {
-          iframeRef.current.contentWindow.postMessage(
-            {
-              type: "get-dyad-text-content",
-              data: { componentId: change.componentId },
-            },
-            "*",
-          );
+          transport.post({
+            type: "get-dyad-text-content",
+            data: { componentId: change.componentId },
+          });
         }
 
         // If no responses are expected, trigger immediately
