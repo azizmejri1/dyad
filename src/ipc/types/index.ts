@@ -389,6 +389,7 @@ export type {
   StartRecordingResult,
   RecordingSetupProgressPayload,
   RecordingEndedPayload,
+  RecordingDraftConsumedPayload,
 } from "./recording";
 
 // App blueprint types
