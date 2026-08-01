@@ -33,6 +33,13 @@ import { gitAdd, gitRemove } from "../utils/git_utils";
 import { runningApps } from "../utils/process_manager";
 import { isLockHeld, withLock } from "../utils/lock_utils";
 import { broadcastToRegisteredWindows } from "@/ipc/utils/window_broadcast";
+import {
+  startPreviewTestSession,
+  type PreviewTestSession,
+} from "@/main/preview_test_window";
+import { startPreviewTestBroadcast } from "@/main/preview_test_broadcast";
+import { CDP_ENDPOINT_ENV } from "../utils/playwright_bootstrap";
+import type { TestRunMode } from "@/lib/testRunMode";
 import { spawnStreaming } from "../utils/spawn_streaming";
 import {
   ensurePlaywrightBootstrap,
@@ -203,6 +210,11 @@ export interface RunAppTestsCoreOptions {
    */
   grep?: string;
   /**
+   * Where the run's browser lives. "watch" hosts it in Dyad's own preview;
+   * headed/external opens a real window. Defaults to headless.
+   */
+  runMode?: TestRunMode;
+  /**
    * When true, runs the browser in headed mode (a visible window). Defaults to
    * headless.
    */
@@ -243,6 +255,7 @@ export async function runAppTestsCore({
   testLine,
   grep,
   headed,
+  runMode,
   parallel,
   signal,
   timeoutMs,
@@ -351,6 +364,36 @@ export async function runAppTestsCore({
     args.push("--fully-parallel", `--workers=${parallelWorkerCount()}`);
   }
 
+  // Watch-in-Dyad: host the app in Dyad's own hidden WebContents and hand the
+  // test process a CDP endpoint pointing at it, so the run drives the preview
+  // panel instead of a browser the user never sees. Falls back to an ordinary
+  // run when the session cannot start — a missing debugging port should cost
+  // the user the visualization, not the test run.
+  let previewSession: PreviewTestSession | null = null;
+  let stopPreviewBroadcast: (() => Promise<void>) | null = null;
+  if (runMode === "watch") {
+    previewSession = await startPreviewTestSession({ previewUrl: baseUrl });
+    if (previewSession) {
+      stopPreviewBroadcast = startPreviewTestBroadcast(appId, previewSession);
+    } else {
+      emit(
+        "Could not start Dyad's preview for this run; running headless.\n",
+        "setup",
+      );
+    }
+  }
+
+  // Idempotent: the finally below is the only caller, but a run that is
+  // aborted mid-flight can reach it more than once.
+  const releasePreview = async () => {
+    const stop = stopPreviewBroadcast;
+    const session = previewSession;
+    stopPreviewBroadcast = null;
+    previewSession = null;
+    await stop?.().catch(() => undefined);
+    await session?.dispose().catch(() => undefined);
+  };
+
   let run;
   try {
     run = await spawnStreaming({
@@ -362,6 +405,9 @@ export async function runAppTestsCore({
         ...testEnv,
         [TEST_BASE_URL_ENV]: baseUrl,
         PLAYWRIGHT_JSON_OUTPUT_NAME: TEST_RESULTS_JSON,
+        ...(previewSession
+          ? { [CDP_ENDPOINT_ENV]: previewSession.cdpEndpoint }
+          : {}),
         // Non-interactive: never try to open/serve an HTML report.
         CI: "true",
       }),
@@ -376,6 +422,11 @@ export async function runAppTestsCore({
     const message = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to spawn the test runner: ${message}`);
     return { appId, results: [], infraError: { message } };
+  } finally {
+    // The test process has exited either way; parsing the report below does
+    // not need the preview, so release it now rather than threading teardown
+    // through every remaining return.
+    await releasePreview();
   }
 
   if (run.aborted) {
@@ -508,6 +559,7 @@ export interface RunTestsWithIsolationOptions {
   /** Regex passed to Playwright's `-g` to narrow the run (agent run_tests). */
   grep?: string;
   headed?: boolean;
+  runMode?: TestRunMode;
   parallel?: boolean;
   timeoutMs?: number;
   /** Stamped onto `tests:run-state` so the panel ignores its own runs. */
@@ -536,6 +588,7 @@ export async function runAppTestsWithIsolation({
   testLine,
   grep,
   headed,
+  runMode,
   parallel,
   timeoutMs,
   source,
@@ -673,6 +726,7 @@ export async function runAppTestsWithIsolation({
           testLine,
           grep,
           headed,
+          runMode,
           parallel,
           signal: controller.signal,
           timeoutMs,

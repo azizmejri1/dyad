@@ -27,7 +27,8 @@ import {
   testRunModeLabel,
   isHeadedMode,
 } from "@/lib/testRunMode";
-import { selectedAppIdAtom } from "@/atoms/appAtoms";
+import { previewModeAtom, selectedAppIdAtom } from "@/atoms/appAtoms";
+import { isPreviewOpenAtom } from "@/atoms/viewAtoms";
 import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 import { useCurrentAppUrl } from "@/hooks/useAppRun";
 import {
@@ -546,6 +547,8 @@ export function TestsPanel() {
   // Headless, watched in Dyad's preview panel, or in a real browser window.
   const runMode = resolveTestRunMode(settings ?? {});
   const headed = isHeadedMode(runMode);
+  const setPreviewMode = useSetAtom(previewModeAtom);
+  const setIsPreviewOpen = useSetAtom(isPreviewOpenAtom);
   // When enabled, a file's independent tests run concurrently instead of
   // serially (Playwright `--fully-parallel` with multiple workers).
   const parallel = settings?.testParallel ?? false;
@@ -627,12 +630,21 @@ export function TestsPanel() {
 
       applyRunStarted({ appId, testFile: file, testLine: line, startedAt });
 
+      // Watching a run is the whole point of this mode, so bring the preview
+      // forward rather than leaving the user on the Tests tab wondering where
+      // it went.
+      if (runMode === "watch") {
+        setPreviewMode("preview");
+        setIsPreviewOpen(true);
+      }
+
       try {
         const res = await ipc.tests.runAppTests({
           appId,
           testFile: file,
           testLine: line,
           headed,
+          runMode,
           // A single targeted test can't parallelize, so only opt in for
           // file/all runs.
           parallel: parallel && !isSingleTest,
@@ -668,6 +680,7 @@ export function TestsPanel() {
       applyRunFinished,
       setRunState,
       headed,
+      runMode,
       parallel,
     ],
   );

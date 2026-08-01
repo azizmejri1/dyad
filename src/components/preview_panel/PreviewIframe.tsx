@@ -88,6 +88,7 @@ import { Annotator } from "@/pro/ui/components/Annotator/Annotator";
 import { VisualEditingToolbar } from "./VisualEditingToolbar";
 import { resolvePreviewBrowserUrl } from "./previewBrowserUrl";
 import { PreviewLoadingScreen } from "./PreviewLoadingScreen";
+import { TestDriveOverlay } from "./TestDriveOverlay";
 import { useTranslation } from "react-i18next";
 import {
   formatPreviewAddressPath,
@@ -1502,6 +1503,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
       )}
 
       <div className="relative flex-grow overflow-hidden">
+        <TestDriveOverlay appId={selectedAppId} />
         {!loading && (
           <ErrorBanner
             error={errorMessage}

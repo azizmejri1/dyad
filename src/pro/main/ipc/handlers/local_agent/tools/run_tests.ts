@@ -6,6 +6,7 @@ import {
   TestRunAttemptState,
   escapeXmlAttr,
 } from "./types";
+import { isHeadedMode, resolveTestRunMode } from "@/lib/testRunMode";
 import {
   runAppTestsWithIsolation,
   getRunningTestBaseUrl,
@@ -295,7 +296,8 @@ async function runSpec(
     testFile,
     grep,
     source: "agent",
-    headed: settings.testHeaded ?? false,
+    headed: isHeadedMode(resolveTestRunMode(settings)),
+    runMode: resolveTestRunMode(settings),
     parallel: (settings.testParallel ?? false) && !grep,
     externalSignal: ctx.abortSignal,
     timeoutMs: RUN_TIMEOUT_MS,

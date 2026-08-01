@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TestRunModeSchema } from "@/lib/testRunMode";
 import {
   createClient,
   createEventClient,
@@ -128,6 +129,11 @@ export const RunAppTestsParamsSchema = z.object({
    * can watch the test drive the app. Defaults to headless.
    */
   headed: z.boolean().optional(),
+  /**
+   * Where the run's browser lives. "watch" hosts the app in Dyad's own hidden
+   * WebContents and streams it into the preview panel.
+   */
+  runMode: TestRunModeSchema.optional(),
   /**
    * When true, runs the targeted tests in parallel (overrides the generated
    * config's serial `workers: 1` / `fullyParallel: false`). Speeds up a file
@@ -334,6 +340,21 @@ export const testsEvents = {
   runState: defineEvent({
     channel: "tests:run-state",
     payload: TestsRunStatePayloadSchema,
+  }),
+  /** One screencast frame of a Watch-in-Dyad run. */
+  previewFrame: defineEvent({
+    channel: "tests:preview-frame",
+    payload: z.object({
+      appId: z.number(),
+      dataUrl: z.string(),
+      width: z.number(),
+      height: z.number(),
+    }),
+  }),
+  /** A run taking over, or releasing, the preview panel. */
+  previewState: defineEvent({
+    channel: "tests:preview-state",
+    payload: z.object({ appId: z.number(), active: z.boolean() }),
   }),
 } as const;
 

@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { registerIpcHandlers } from "./ipc/ipc_host";
+import { enablePreviewDebugging } from "./main/preview_test_window";
 import dotenv from "dotenv";
 // @ts-ignore
 import started from "electron-squirrel-startup";
@@ -1199,6 +1200,12 @@ const createApplicationMenu = () => {
   const appMenu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(appMenu);
 };
+
+// Opens Chromium's debugging port on loopback so a Watch-in-Dyad test run can
+// drive the preview over CDP. Command-line switches are read at browser-process
+// startup, so like the protocol registration below this must run before
+// app.whenReady().
+enablePreviewDebugging();
 
 // Register dyad-media:// protocol for serving persistent media attachments.
 // Must be called before app.whenReady().
