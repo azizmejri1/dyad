@@ -40,6 +40,7 @@ import {
 } from "./state_machines/react";
 import { clearPreviewRuntimeForAppAtom } from "./atoms/previewRuntimeAtoms";
 import { clearTestRuntimeForAppAtom } from "./atoms/testRuntimeAtoms";
+import { clearRecorderForAppAtom } from "./atoms/recorderAtoms";
 
 // @ts-ignore
 console.log("Running in mode:", import.meta.env.MODE);
@@ -152,6 +153,10 @@ function RendererServices() {
     (appId: number) => {
       store.set(clearPreviewRuntimeForAppAtom, appId);
       store.set(clearTestRuntimeForAppAtom, appId);
+      // Recorded interactions can carry whatever the user typed into the app;
+      // a deleted app must not leave them (or its draft) resident for the rest
+      // of the renderer's life.
+      store.set(clearRecorderForAppAtom, appId);
     },
     [store],
   );
