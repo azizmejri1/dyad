@@ -3,9 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildDyadFixtures,
   buildPlaywrightConfig,
+  CDP_ENDPOINT_ENV,
   detectSystemBrowserChannel,
   DYAD_CONFIG_FILENAME,
+  DYAD_FIXTURES_FILENAME,
   ensurePlaywrightBootstrap,
   isPlaywrightBrowserInstalled,
   TEST_BASE_URL_ENV,
@@ -82,7 +85,50 @@ describe("buildPlaywrightConfig", () => {
   });
 });
 
+describe("buildDyadFixtures", () => {
+  it("attaches over CDP, not via connectOptions", () => {
+    // use.connectOptions drives browserType.connect (Playwright's own
+    // protocol against a Playwright server) and cannot talk to a CDP
+    // endpoint. Only connectOverCDP can.
+    const fixtures = buildDyadFixtures();
+    expect(fixtures).toContain("chromium.connectOverCDP");
+    expect(fixtures).not.toContain("connectOptions");
+  });
+
+  it("falls back to stock test when Dyad is not driving the run", () => {
+    const fixtures = buildDyadFixtures();
+    expect(fixtures).toContain(`process.env.${CDP_ENDPOINT_ENV}`);
+    // The ternary's else-branch is the unmodified base test.
+    expect(fixtures).toMatch(/:\s*base;/);
+    expect(fixtures).toContain("export { expect }");
+  });
+
+  it("scopes the browser fixture to the worker", () => {
+    // A test-scoped browser would reconnect per test and thrash the proxy.
+    expect(buildDyadFixtures()).toContain('scope: "worker"');
+  });
+});
+
 describe("ensurePlaywrightBootstrap", () => {
+  it("writes the fixtures module but never overwrites an edited one", async () => {
+    const { appPath } = makeAppWithBrowserMarker({
+      packageVersion: "1.2.3",
+      executableExists: true,
+    });
+
+    await ensurePlaywrightBootstrap({ appPath });
+    const fixturesPath = path.join(appPath, DYAD_FIXTURES_FILENAME);
+    expect(fs.readFileSync(fixturesPath, "utf8")).toContain(
+      "chromium.connectOverCDP",
+    );
+
+    // Once the user has made it their own (sentinel gone), it is left alone.
+    const userEdited = "export { test, expect } from '@playwright/test';\n";
+    fs.writeFileSync(fixturesPath, userEdited);
+    await ensurePlaywrightBootstrap({ appPath });
+    expect(fs.readFileSync(fixturesPath, "utf8")).toBe(userEdited);
+  });
+
   // The fixture has @playwright/test and a valid browser marker, so bootstrap
   // reaches the config step without spawning an install.
   it("writes its own config and never touches the app's playwright.config.ts", async () => {

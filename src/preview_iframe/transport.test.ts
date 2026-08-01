@@ -46,10 +46,12 @@ describe("createIframeTransport", () => {
     const contentWindow = { postMessage: vi.fn() };
     const transport = createIframeTransport(() => iframeWith(contentWindow));
 
-    expect(transport.matchesSource(contentWindow as MessageEventSource)).toBe(
-      true,
+    expect(
+      transport.matchesSource(contentWindow as unknown as MessageEventSource),
+    ).toBe(true);
+    expect(transport.matchesSource({} as unknown as MessageEventSource)).toBe(
+      false,
     );
-    expect(transport.matchesSource({} as MessageEventSource)).toBe(false);
     expect(transport.matchesSource(null)).toBe(false);
   });
 

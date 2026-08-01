@@ -79,6 +79,16 @@ export const TEST_BASE_URL_ENV = "DYAD_TEST_BASE_URL";
  */
 export const DYAD_CONFIG_FILENAME = "playwright-dyad.config.ts";
 
+/**
+ * Endpoint of Dyad's filtering CDP proxy. Set only for a Watch-in-Dyad run;
+ * absent for headless runs and for the user running `npx playwright test`
+ * themselves, in which case the fixtures fall back to a normal launch.
+ */
+export const CDP_ENDPOINT_ENV = "DYAD_CDP_ENDPOINT";
+
+/** Fixture module that routes the `browser` fixture through Dyad's proxy. */
+export const DYAD_FIXTURES_FILENAME = "dyad-fixtures.ts";
+
 // Every config filename Playwright auto-resolves — an app with any of these
 // owns its own config, so its bare `playwright test` script is not ours.
 const PLAYWRIGHT_CONFIG_FILENAMES = [
@@ -138,6 +148,45 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
 });
+`;
+}
+
+/**
+ * Builds `dyad-fixtures.ts`.
+ *
+ * Playwright's `use.connectOptions` drives `browserType.connect`, which speaks
+ * Playwright's own protocol against a Playwright server — it cannot talk to a
+ * CDP endpoint. `connectOverCDP` is a separate API with no `use.` equivalent,
+ * so attaching to Dyad's preview has to happen in a fixture.
+ *
+ * When the env var is absent this re-exports the stock `test`/`expect`
+ * unchanged, so a spec importing from here still runs under a bare
+ * `npx playwright test` with Dyad not involved at all.
+ */
+export function buildDyadFixtures(): string {
+  return `import { test as base, expect, chromium } from "@playwright/test";
+
+// ${DYAD_CONFIG_SENTINEL}. Importing \`test\` from here lets Dyad drive your app
+// inside its preview panel when you press Run. Outside Dyad this is a plain
+// re-export of @playwright/test, so \`npx playwright test\` behaves normally.
+const cdpEndpoint = process.env.${CDP_ENDPOINT_ENV};
+
+// Overriding a built-in fixture reuses its type, so this takes no generics.
+export const test = cdpEndpoint
+  ? base.extend({
+      browser: [
+        async ({}, use) => {
+          const browser = await chromium.connectOverCDP(cdpEndpoint);
+          await use(browser);
+          // Disconnects from Dyad's browser; it does not close the preview.
+          await browser.close();
+        },
+        { scope: "worker" },
+      ],
+    })
+  : base;
+
+export { expect };
 `;
 }
 
@@ -356,6 +405,29 @@ function writePlaywrightConfig(
   );
 }
 
+export function dyadFixturesPath(appPath: string): string {
+  return path.join(appPath, DYAD_FIXTURES_FILENAME);
+}
+
+/**
+ * Keeps `dyad-fixtures.ts` current. Rewritten whenever it is still template
+ * output; a user who has edited it (sentinel gone) keeps their version.
+ */
+function writeDyadFixtures(appPath: string): void {
+  const target = dyadFixturesPath(appPath);
+  if (fs.existsSync(target)) {
+    let existing: string | null = null;
+    try {
+      existing = fs.readFileSync(target, "utf8");
+    } catch {
+      existing = null;
+    }
+    if (existing != null && !existing.includes(DYAD_CONFIG_SENTINEL)) return;
+  }
+  fs.writeFileSync(target, buildDyadFixtures());
+  logger.info(`Wrote ${DYAD_FIXTURES_FILENAME}`);
+}
+
 /**
  * Rewrite a Dyad-generated config that still points `testDir` at the legacy
  * `./tests` directory so it targets the current `./${E2E_TEST_DIR}`. Only touches
@@ -516,6 +588,9 @@ export async function ensurePlaywrightBootstrap({
   // Bring an older Dyad config's testDir up to date (./tests -> ./e2e-tests) so
   // existing apps' runs target the new directory after the convention switch.
   migrateConfigTestDir(appPath);
+
+  // Specs import `test` from here so a Watch-in-Dyad run can attach over CDP.
+  writeDyadFixtures(appPath);
 
   // The bundled Chromium binary is downloaded separately from the npm package,
   // so we track it apart (a present package does NOT mean the browser is
