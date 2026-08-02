@@ -249,6 +249,26 @@ export interface RunAppTestsCoreOptions {
  * server's proxy URL, and parse the JSON report. Backs the `tests:run` IPC
  * handler (the UI "Run" button).
  */
+/**
+ * True when at least one spec imports Dyad's fixtures. Only such a spec can be
+ * routed into the preview: importing `@playwright/test` directly makes
+ * Playwright launch its own browser, whatever endpoint we hand it.
+ */
+async function specsUseDyadFixtures(appPath: string): Promise<boolean> {
+  try {
+    const specs = await glob(`${E2E_TEST_DIR}/**/*.spec.{ts,js}`, {
+      cwd: appPath,
+      absolute: true,
+    });
+    for (const spec of specs) {
+      if (fs.readFileSync(spec, "utf8").includes("dyad-fixtures")) return true;
+    }
+  } catch {
+    // Unreadable specs are the run's problem, not this hint's.
+  }
+  return false;
+}
+
 export async function runAppTestsCore({
   appId,
   testFile,
@@ -372,15 +392,32 @@ export async function runAppTestsCore({
   let previewSession: PreviewTestSession | null = null;
   let stopPreviewBroadcast: (() => Promise<void>) | null = null;
   if (runMode === "watch") {
-    previewSession = await startPreviewTestSession({ previewUrl: baseUrl });
+    let diagnostic: string | null = null;
+    previewSession = await startPreviewTestSession({
+      previewUrl: baseUrl,
+      onDiagnostic: (reason) => {
+        diagnostic = reason;
+      },
+    });
     if (previewSession) {
       stopPreviewBroadcast = startPreviewTestBroadcast(appId, previewSession);
+      emit("Watch in Dyad: driving the preview panel.\n", "setup");
     } else {
       emit(
-        "Could not start Dyad's preview for this run; running headless.\n",
+        `Watch in Dyad unavailable (${diagnostic ?? "unknown reason"}); running headless instead.\n`,
         "setup",
       );
     }
+  }
+
+  // A spec that imports from @playwright/test rather than ./dyad-fixtures gets
+  // its own browser no matter what we set up here, so say so plainly instead of
+  // letting the panel sit on an empty preview.
+  if (previewSession && !(await specsUseDyadFixtures(appPath))) {
+    emit(
+      'Note: your specs import from @playwright/test, so this run launches its own browser and will not appear in the preview. Change the import to "./dyad-fixtures" to watch it here.\n',
+      "setup",
+    );
   }
 
   // Idempotent: the finally below is the only caller, but a run that is

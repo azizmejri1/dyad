@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { app, BrowserWindow } from "electron";
 import log from "electron-log";
@@ -26,16 +27,75 @@ const logger = log.scope("preview_test_window");
  */
 
 /**
- * Opens Chromium's debugging port on an ephemeral port. Must run before the app
- * is ready — command-line switches are read at browser-process startup.
+ * Port Chromium's debugging server was told to listen on. Chrome writes the
+ * chosen port to a DevToolsActivePort file when asked for port 0; Electron does
+ * not reliably do the same, so we pick a free port ourselves and remember it
+ * rather than depending on that file existing.
  */
-export function enablePreviewDebugging(): void {
-  app.commandLine.appendSwitch("remote-debugging-port", "0");
-  // Bind explicitly so the port is never exposed off the loopback interface.
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+let debuggingPort: number | null = null;
+
+/** Reserves a free loopback port by binding and immediately releasing it. */
+function reserveLoopbackPort(): number | null {
+  // Binding to port 0 makes the OS pick a free one; we close straight away and
+  // hand the number to Chromium. The race window is tiny and the alternative
+  // (a fixed port) collides between two running Dyad instances.
+  const server = net.createServer();
+  try {
+    server.listen(0, "127.0.0.1");
+    const address = server.address();
+    return typeof address === "object" && address ? address.port : null;
+  } catch {
+    return null;
+  } finally {
+    server.close();
+  }
 }
 
-function readDevToolsEndpoint(): DevToolsEndpoint | null {
+/**
+ * Opens Chromium's debugging port on loopback. Must run before the app is
+ * ready — command-line switches are read at browser-process startup.
+ */
+export function enablePreviewDebugging(): void {
+  const port = reserveLoopbackPort();
+  if (port == null) {
+    logger.warn("Could not reserve a debugging port; Watch-in-Dyad disabled.");
+    return;
+  }
+  debuggingPort = port;
+  app.commandLine.appendSwitch("remote-debugging-port", String(port));
+  // Bind explicitly so the port is never exposed off the loopback interface.
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  logger.info(`Preview debugging port reserved on 127.0.0.1:${port}`);
+}
+
+/**
+ * Resolves the browser-level WebSocket endpoint.
+ *
+ * Prefers asking the port directly (/json/version), which works regardless of
+ * whether Electron writes a DevToolsActivePort file; falls back to that file
+ * for the case where the port was assigned rather than reserved.
+ */
+async function readDevToolsEndpoint(): Promise<DevToolsEndpoint | null> {
+  if (debuggingPort != null) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${debuggingPort}/json/version`,
+      );
+      const info = (await response.json()) as {
+        webSocketDebuggerUrl?: string;
+      };
+      if (typeof info.webSocketDebuggerUrl === "string") {
+        return {
+          port: debuggingPort,
+          browserWsEndpoint: info.webSocketDebuggerUrl,
+        };
+      }
+      logger.warn("/json/version returned no webSocketDebuggerUrl");
+    } catch (error) {
+      logger.warn(`Debugging port ${debuggingPort} is not answering`, error);
+    }
+  }
+
   try {
     const file = path.join(app.getPath("userData"), "DevToolsActivePort");
     return parseDevToolsActivePort(fs.readFileSync(file, "utf8"));
@@ -82,6 +142,12 @@ export interface StartPreviewTestSessionOptions {
   width?: number;
   height?: number;
   onInputEvent?: (event: CdpInputEvent) => void | Promise<void>;
+  /**
+   * Reports why the session could not start, in words meant for the test
+   * output pane. Degrading to a normal run silently is what made the first two
+   * attempts at this impossible to diagnose.
+   */
+  onDiagnostic?: (reason: string) => void;
 }
 
 /**
@@ -93,10 +159,19 @@ export interface StartPreviewTestSessionOptions {
 export async function startPreviewTestSession(
   options: StartPreviewTestSessionOptions,
 ): Promise<PreviewTestSession | null> {
-  const endpoint = readDevToolsEndpoint();
-  if (!endpoint) {
-    logger.warn("No DevToolsActivePort; Watch-in-Dyad is unavailable.");
+  const fail = (reason: string): null => {
+    logger.warn(`Watch-in-Dyad unavailable: ${reason}`);
+    options.onDiagnostic?.(reason);
     return null;
+  };
+
+  const endpoint = await readDevToolsEndpoint();
+  if (!endpoint) {
+    return fail(
+      debuggingPort == null
+        ? "no debugging port was reserved at startup"
+        : `Chromium's debugging port (${debuggingPort}) did not respond`,
+    );
   }
 
   const window = new BrowserWindow({
@@ -120,9 +195,10 @@ export async function startPreviewTestSession(
       options.previewUrl,
     );
     if (!targetId) {
-      logger.warn(`Preview target never appeared for ${options.previewUrl}`);
       window.destroy();
-      return null;
+      return fail(
+        `the preview page never registered as a CDP target for ${options.previewUrl}`,
+      );
     }
 
     const proxy = new PreviewCdpProxy({
@@ -144,6 +220,6 @@ export async function startPreviewTestSession(
   } catch (error) {
     logger.error("Failed to start preview test session", error);
     if (!window.isDestroyed()) window.destroy();
-    return null;
+    return fail(error instanceof Error ? error.message : String(error));
   }
 }
