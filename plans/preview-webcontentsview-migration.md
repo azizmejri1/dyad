@@ -384,24 +384,50 @@ no call-site rework.
 ### The transport bridge (Phase 1)
 
 `worker/dyad-bridge.js`, injected **first** by `injectHTML()`
-(`proxy_server.js:188`, ahead of stacktrace/shim), ~60 lines. It detects the
-transport and, in native mode, assigns a proxy object to `window.parent` —
-legal because `window.parent` is `[Replaceable]` in WebIDL. It also exposes
-`window.__dyadTrustedSource(e)`.
+(`proxy_server.js:188`, ahead of stacktrace/shim), ~60 lines. It exposes
+`window.__dyadBridge.post(msg)` / `.onMessage(fn)` and
+`window.__dyadTrustedSource(e)`, dispatching to `window.parent.postMessage` in
+iframe mode and to IPC (via a preview-only preload's
+`contextBridge.exposeInMainWorld("__dyadIpc", …)`) in native mode.
 
-Consequences:
+Work in the clients:
 
-- **The 28 send sites need zero edits.** They keep calling
-  `window.parent.postMessage(msg, "*")`; in iframe mode that is byte-for-byte
-  today's behavior.
-- **`dyad-shim.js:3` needs no edit** — the bridge guarantees
-  `window.parent !== window` in both modes, so the existing gate passes.
-- **4 one-line guard edits** (`shim:86`, `selector:579`, `visual-editor:308`,
+- **28 send sites** across five files: `window.parent.postMessage(` →
+  `__dyadBridge.post(`. Mechanical find-and-replace.
+  (`dyad-shim.js` 32/44/74/132/157/179/192/210/257;
+  `dyad-component-selector-client.js` 164/465/508/543/666;
+  `dyad-visual-editor-client.js` 110/129/178/202/236/268/290;
+  `dyad-screenshot-client.js` 168/181; `dyad_logs.js` 331/345/359/373/387.)
+- **4 inbound guards** (`shim:86`, `selector:579`, `visual-editor:308`,
   `screenshot:194`) become `if (!__dyadTrustedSource(e)) return;`.
+- **1 transport gate** (`dyad-shim.js:3`) — the `isInsideIframe` early-return
+  becomes a bridge-availability check.
 
-So Phase 1 is **one new file plus four one-line edits.**
+So Phase 1 is **one new file plus 33 mechanical edits.**
 
-Two mechanisms that were tried and rejected during design:
+> **Rejected: mutating the global `window.parent`.** A proxy object assigned to
+> `window.parent` in native mode is legal (`[Replaceable]` in WebIDL) and would
+> have left all 28 send sites untouched. **It was rejected because it cancels
+> part of the migration's own value.** The SDKs most likely to need working
+> top-level navigation are exactly the ones that branch on framing: auth SDKs
+> commonly do `if (window.parent !== window)` and then refuse or alter a
+> redirect flow, preferring a popup or an "open in a new window" affordance.
+> Under a global proxy those SDKs would be told they are framed when they are
+> not, keep taking the framed branch, and **never attempt the redirect that now
+> would have succeeded** — shipping the capability while lying to the callers
+> who would use it. `window.top` being `[LegacyUnforgeable]` only partly helps:
+> SDKs checking `window.top !== window.self` would stay correct, giving
+> inconsistent behavior across SDKs depending on which idiom each happens to
+> use, which is worse than either uniform answer. Twenty-eight boring edits beat
+> mutating a global that arbitrary user code and AI-chosen third-party SDKs read.
+>
+> Two narrower scopings were also rejected: wrapping each client in
+> `(function(window){…})(proxyOverWindow)` breaks `this`-binding on DOM methods
+> ("Illegal invocation") and constructor use; and regex-rewriting client source
+> at injection time makes shipped code differ from repo source — the same
+> Transparent-Over-Magical failure we would flag in review.
+
+Two further mechanisms tried and rejected during design:
 
 - **A preload cannot host the shim.** With `contextIsolation: true` the preload
   runs in the isolated world and the injected clients in the main world —
@@ -519,8 +545,12 @@ payload-shape check, partially closing the validation gap above.
 ### Phase 1 — Bridge + overlay pre-migration (M) · funded, no flag
 
 - [ ] `worker/dyad-bridge.js`, injected first in `injectHTML()`.
-- [ ] 4 guard edits → `__dyadTrustedSource(e)`; add an inbound payload-shape
-      check in that one place.
+- [ ] 28 send sites → `__dyadBridge.post(`; 4 guard edits →
+      `__dyadTrustedSource(e)`; the `dyad-shim.js:3` gate → bridge-availability
+      check. Add an inbound payload-shape check in the one guard location.
+- [ ] CI grep assertion: **zero** `window.parent.postMessage` remaining across
+      the five injected clients, so the global-mutation shortcut cannot creep
+      back in (see D11).
 - [ ] Inset ErrorBanner; tooltip `side="top"` + `collisionBoundary`; Sonner
       `bottom-left` + `isChatPanelHidden` backstop; toast audit (`:786`, `:376`).
 - [ ] `suppress()` arbiter as a plain module; drives `inert` + `aria-hidden` in
@@ -679,7 +709,7 @@ signal; time-to-first-successful-preview (guardrail — must not regress).
 | Zoom-aware bounds missed → broken for non-100% users                         | M          | H      | Named as phase-2 correctness with a test matrix, not a11y polish                               |
 | Fast tab-flip races async view teardown                                      | H          | M      | Keyed disposal barrier in phase 2                                                              |
 | Global shortcuts silently die with preview focused                           | H          | H      | `before-input-event` forwarding, blocking the flip                                             |
-| Shimmed `window.parent` misleads framing-detection code                      | M          | M      | See Open Questions Q1                                                                          |
+| Framing-aware SDKs take the framed branch and never attempt the redirect     | M          | H      | Resolved: no global `window.parent` mutation — edit the 28 sites instead (D11)                 |
 | Occlusion regressions touch 100% of users                                    | M          | H      | Overlay pre-migration lands on the iframe first, at zero native risk                           |
 | Real emulation surfaces existing app breakage as "the update broke it"       | H          | M      | First-encounter callout + "Fix mobile layout with AI" + legacy width mode                      |
 | An already-loaded preview page keeps old inlined clients after a Dyad update | M          | L      | Bridge protocol version + graceful degradation; bounded by one reload (see Phase 1 note)       |
@@ -687,49 +717,37 @@ signal; time-to-first-successful-preview (guardrail — must not regress).
 
 ## Open questions
 
-**Q1 — Does the shimmed `window.parent` mislead the user's own app?**
-Raised during compilation, unresolved. The bridge assigns a proxy to
-`window.parent` in native mode so the 28 send sites need no edits. But the
-user's app code and any third-party SDK it loads share that main world. Code
-doing `if (window.parent !== window) { /* we're framed */ }` will conclude it is
-framed when it is actually top-level. Mitigating: today the preview genuinely
-_is_ framed, so that branch already runs — the shim preserves current behavior
-rather than regressing it. Cost: **JS-based framing detection will not benefit
-from the migration even though top-level navigation will.** `window.top` is
-`[LegacyUnforgeable]` and stays correct, so SDKs checking `window.top !==
-window.self` behave correctly. Decide during phase 2 whether to scope the
-`window.parent` replacement to the injected clients only.
-
-**Q2 — Per-app session partition, or one shared preview partition?**
+**Q1 — Per-app session partition, or one shared preview partition?**
 Per-app gives true isolation and makes "Clear cache" meaningful, but multiplies
 disk and changes today's behavior where an OAuth login in a preview survives
 rebuilds on the deterministic port. Needs a migration story or explicit
 deferral. (Phase 4.)
 
-**Q3 — Is Tier 2 (hide) acceptable for dropdowns?**
+**Q2 — Is Tier 2 (hide) acceptable for dropdowns?**
 If so, Tier 3 freeze has no remaining consumer and the capture pipeline
 disappears entirely. A dropdown is open for under 2 seconds. Test in the phase-0
 overlay prototype.
 
-**Q4 — Does the docked inspector rail ever happen?**
+**Q3 — Does the docked inspector rail ever happen?**
 Deferred out of this plan by decision. The collision-detection bug at
 `VisualEditingToolbar.tsx:358-359` is real and independent of this migration —
 worth its own issue regardless.
 
 ## Decision log
 
-| #       | Decision                                                                         | Reasoning                                                                                                                                                                                                                                                                                                                                                             |
-| ------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **D1**  | Fund phase 0 + 1 only; gate the rest                                             | Phases 0-1 carry no native risk, need no flag, and stand alone as improvements. The native phases are a multi-quarter bet that should not be made on anecdote.                                                                                                                                                                                                        |
-| **D2**  | Visual editing stays on the iframe; no docked rail                               | The rail is a product redesign of a flagship Pro interaction. Adopting the most expensive change for the least-validated reason, under migration schedule pressure, is the wrong trade. Deferred to its own timeline.                                                                                                                                                 |
-| **D3**  | Stop at the bridge if G1 fails                                                   | A permanent dual-renderer fork means phase 5 never happens and two occlusion models exist forever. An `E2E_TEST_BUILD` eval bridge means synthetic clicks pass while real pointer hit-testing could be broken — a test that lies, on the riskiest surface in the product.                                                                                             |
-| **D4**  | Gate on measured frequency                                                       | The counter costs ~20 lines and can retire the project cheaply if the number is small.                                                                                                                                                                                                                                                                                |
-| **D5**  | Destroy views on tab switch; no warm retention                                   | Tab-switch latency is not a top-4 pain, and warm views are a _new_ capability, not a restoration. Dropping it shrinks phase 3 M→S, removes the riskiest handoff, and keeps the memory profile identical to today. It also avoids background tabs running the user's app — timers, polling, and duplicate writes to their Supabase from a tab they are not looking at. |
-| **D6**  | No cloud-mode-only wedge                                                         | Both modes hit the same local proxy origin, so a cloud wedge reduces zero surface, forks on a dimension orthogonal to the renderer, and beta-tests on paying users. The flag plus an opt-in cohort gives the same containment with no fork.                                                                                                                           |
-| **D7**  | Device emulation moves phase 4 → phase 2                                         | It is now the #1 justification and phases 1-3 are otherwise zero user-visible change. A plan that delivers its primary value last is how programs get cancelled at 70% with nothing shipped.                                                                                                                                                                          |
-| **D8**  | `previewRendererDefault` + selector, not a boolean                               | Keeps per-app routing reachable without call-site rework when the "switch this app to classic" escape hatch lands.                                                                                                                                                                                                                                                    |
-| **D9**  | Three-tier overlay policy, not one universal freeze                              | One arbiter is right; universal freeze is the expensive version. Three tiers gets the same no-whack-a-mole property with ~1 capture site instead of ~15.                                                                                                                                                                                                              |
-| **D10** | `suppress()` ships as a plain module, promoted to a machine only if native lands | Avoids creating a machine directory, three test files and a boundaries inventory entry that may never be used.                                                                                                                                                                                                                                                        |
+| #       | Decision                                                                         | Reasoning                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **D1**  | Fund phase 0 + 1 only; gate the rest                                             | Phases 0-1 carry no native risk, need no flag, and stand alone as improvements. The native phases are a multi-quarter bet that should not be made on anecdote.                                                                                                                                                                                                                                                                |
+| **D2**  | Visual editing stays on the iframe; no docked rail                               | The rail is a product redesign of a flagship Pro interaction. Adopting the most expensive change for the least-validated reason, under migration schedule pressure, is the wrong trade. Deferred to its own timeline.                                                                                                                                                                                                         |
+| **D3**  | Stop at the bridge if G1 fails                                                   | A permanent dual-renderer fork means phase 5 never happens and two occlusion models exist forever. An `E2E_TEST_BUILD` eval bridge means synthetic clicks pass while real pointer hit-testing could be broken — a test that lies, on the riskiest surface in the product.                                                                                                                                                     |
+| **D4**  | Gate on measured frequency                                                       | The counter costs ~20 lines and can retire the project cheaply if the number is small.                                                                                                                                                                                                                                                                                                                                        |
+| **D5**  | Destroy views on tab switch; no warm retention                                   | Tab-switch latency is not a top-4 pain, and warm views are a _new_ capability, not a restoration. Dropping it shrinks phase 3 M→S, removes the riskiest handoff, and keeps the memory profile identical to today. It also avoids background tabs running the user's app — timers, polling, and duplicate writes to their Supabase from a tab they are not looking at.                                                         |
+| **D6**  | No cloud-mode-only wedge                                                         | Both modes hit the same local proxy origin, so a cloud wedge reduces zero surface, forks on a dimension orthogonal to the renderer, and beta-tests on paying users. The flag plus an opt-in cohort gives the same containment with no fork.                                                                                                                                                                                   |
+| **D7**  | Device emulation moves phase 4 → phase 2                                         | It is now the #1 justification and phases 1-3 are otherwise zero user-visible change. A plan that delivers its primary value last is how programs get cancelled at 70% with nothing shipped.                                                                                                                                                                                                                                  |
+| **D8**  | `previewRendererDefault` + selector, not a boolean                               | Keeps per-app routing reachable without call-site rework when the "switch this app to classic" escape hatch lands.                                                                                                                                                                                                                                                                                                            |
+| **D9**  | Three-tier overlay policy, not one universal freeze                              | One arbiter is right; universal freeze is the expensive version. Three tiers gets the same no-whack-a-mole property with ~1 capture site instead of ~15.                                                                                                                                                                                                                                                                      |
+| **D10** | `suppress()` ships as a plain module, promoted to a machine only if native lands | Avoids creating a machine directory, three test files and a boundaries inventory entry that may never be used.                                                                                                                                                                                                                                                                                                                |
+| **D11** | Edit the 28 send sites; never mutate the global `window.parent`                  | A `window.parent` proxy would have avoided the edits, but framing-aware auth SDKs would keep taking their framed branch and never attempt the redirect that the migration exists to enable — shipping the capability while lying to its callers. `window.top` staying correct makes the inconsistency worse, not better. 28 mechanical edits beat a global-mutation footgun in a world of AI-chosen third-party dependencies. |
 
 ### Positions reversed during the debate
 
@@ -738,7 +756,11 @@ reading the original framing will otherwise re-derive the wrong conclusions.
 
 - **The transport rewrite was over-scoped by roughly an order of magnitude.**
   Initially assessed as ~2000 lines across five files; it is one new file plus
-  four one-line edits. It is an adapter, not a rewrite.
+  33 mechanical edits. It is an adapter, not a rewrite.
+- **The clever version of that adapter was then rejected by its own author.**
+  Mutating the global `window.parent` would have cut the edits to four, but it
+  would have cancelled the top-level-navigation win for exactly the SDKs that
+  need it (D11).
 - **"No more blank previews" was over-claimed.** Nesting depth does not rescue
   embedded third-party widgets. The real win is top-level navigation, which
   reordered the value case and made device emulation the primary justification.
