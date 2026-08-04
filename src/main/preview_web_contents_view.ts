@@ -20,6 +20,16 @@ interface PreviewViewEntry {
   /** The URL most recently handed to loadURL, used to keep `show` idempotent. */
   currentUrl: string | null;
   disposeHostHooks: () => void;
+  /**
+   * Set while a test run drives this view over CDP. The page must outlive the
+   * React component for the run's duration, so hiding is downgraded to
+   * `setVisible(false)` and external side effects are suppressed.
+   */
+  automationActive: boolean;
+  /** The renderer asked to hide while automation held the view open. */
+  hiddenDuringAutomation: boolean;
+  /** Lets the runner report a view that was destroyed out from under it. */
+  onAutomationViewDestroyed: (() => void) | null;
 }
 
 /**
@@ -112,12 +122,18 @@ function createEntry(window: BrowserWindow, key: number): PreviewViewEntry {
     view,
     currentUrl: null,
     disposeHostHooks: () => {},
+    automationActive: false,
+    hiddenDuringAutomation: false,
+    onAutomationViewDestroyed: null,
   };
 
   const contents = view.webContents;
 
   contents.setWindowOpenHandler(({ url }) => {
-    openExternally(url);
+    // A driven test must not spray the user's system browser with windows.
+    if (!entry.automationActive) {
+      openExternally(url);
+    }
     return { action: "deny" };
   });
 
@@ -132,6 +148,10 @@ function createEntry(window: BrowserWindow, key: number): PreviewViewEntry {
     if (entry.currentUrl && sameOrigin(url, entry.currentUrl)) return;
 
     event.preventDefault();
+    if (entry.automationActive) {
+      logger.debug(`Blocked off-origin navigation during automation: ${url}`);
+      return;
+    }
     logger.debug(`Opening off-origin preview navigation externally: ${url}`);
     openExternally(url);
   };
@@ -190,6 +210,20 @@ function destroyEntry(key: number, window: BrowserWindow): void {
   if (!entry) return;
   entries.delete(key);
 
+  if (entry.automationActive) {
+    // The window closed or the host navigated mid-run: the driving test is
+    // about to fail, so let the runner explain why rather than reporting a
+    // bare CDP disconnect.
+    const notify = entry.onAutomationViewDestroyed;
+    entry.automationActive = false;
+    entry.onAutomationViewDestroyed = null;
+    try {
+      notify?.();
+    } catch (error) {
+      logger.warn("Preview automation destroy callback failed:", error);
+    }
+  }
+
   try {
     entry.disposeHostHooks();
   } catch (error) {
@@ -231,6 +265,16 @@ export function showPreviewView(
   if (key === null) return;
 
   const entry = entries.get(key) ?? createEntry(window, key);
+
+  if (entry.hiddenDuringAutomation) {
+    entry.hiddenDuringAutomation = false;
+    try {
+      entry.view.setVisible(true);
+    } catch (error) {
+      logger.warn("Failed to re-show preview view after automation:", error);
+    }
+  }
+
   entry.view.setBounds(roundBounds(bounds));
 
   if (entry.currentUrl !== url) {
@@ -266,6 +310,22 @@ export function setPreviewViewBounds(
 export function hidePreviewView(window: BrowserWindow): void {
   const key = resolveKey(window);
   if (key === null) return;
+
+  const entry = entries.get(key);
+  if (entry?.automationActive) {
+    // Destroying now would kill the page a running test is driving — for
+    // instance when the user opens the Tests tab to watch progress, which
+    // unmounts the preview component. Keep it alive but invisible; automation
+    // teardown destroys it if the renderer never asked for it back.
+    entry.hiddenDuringAutomation = true;
+    try {
+      entry.view.setVisible(false);
+    } catch (error) {
+      logger.warn("Failed to hide preview view during automation:", error);
+    }
+    return;
+  }
+
   destroyEntry(key, window);
 }
 
@@ -303,6 +363,95 @@ export function previewViewGoForward(window: BrowserWindow): void {
 
 export function previewViewReload(window: BrowserWindow): void {
   withLiveContents(window, (contents) => contents.reload());
+}
+
+export interface PreviewViewStatus {
+  exists: boolean;
+  currentUrl: string | null;
+  automationActive: boolean;
+}
+
+export function getPreviewViewStatus(window: BrowserWindow): PreviewViewStatus {
+  const entry = getEntry(window);
+  return {
+    exists: !!entry,
+    currentUrl: entry?.currentUrl ?? null,
+    automationActive: !!entry?.automationActive,
+  };
+}
+
+/**
+ * Waits until this window's preview view is showing `url`.
+ *
+ * Matches on origin rather than the exact string: the isolated-test-database
+ * path restarts the dev server before a run, which can churn the renderer's
+ * URL (and trailing slashes differ between the two sides).
+ */
+export async function waitForPreviewView(
+  window: BrowserWindow,
+  {
+    url,
+    timeoutMs = 15_000,
+    pollMs = 250,
+  }: { url: string; timeoutMs?: number; pollMs?: number },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const status = getPreviewViewStatus(window);
+    if (status.currentUrl && sameOrigin(status.currentUrl, url)) {
+      return { ok: true };
+    }
+
+    if (Date.now() >= deadline) {
+      return {
+        ok: false,
+        reason: status.exists
+          ? `it is showing ${status.currentUrl ?? "nothing"}`
+          : "the native preview isn't open",
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+/**
+ * Marks this window's preview view as driven by a test run. Returns null when
+ * there is no live view, so the caller can fail the run before spawning.
+ */
+export function beginPreviewAutomation(
+  window: BrowserWindow,
+  { onViewDestroyed }: { onViewDestroyed?: () => void } = {},
+): { end: () => void } | null {
+  const key = resolveKey(window);
+  if (key === null) return null;
+
+  const entry = entries.get(key);
+  if (!entry) return null;
+
+  entry.automationActive = true;
+  entry.hiddenDuringAutomation = false;
+  entry.onAutomationViewDestroyed = onViewDestroyed ?? null;
+
+  let ended = false;
+  return {
+    end: () => {
+      if (ended) return;
+      ended = true;
+
+      const current = entries.get(key);
+      if (current !== entry) return;
+
+      entry.automationActive = false;
+      entry.onAutomationViewDestroyed = null;
+
+      if (entry.hiddenDuringAutomation) {
+        // The renderer asked to hide while we held the view open; honor it now.
+        entry.hiddenDuringAutomation = false;
+        destroyEntry(key, window);
+      }
+    },
+  };
 }
 
 /** Test-only: drops all tracked views without touching Electron objects. */

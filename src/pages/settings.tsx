@@ -39,6 +39,7 @@ import { BlockUnsafeNpmPackagesSwitch } from "@/components/BlockUnsafeNpmPackage
 import { CloudSandboxExperimentSwitch } from "@/components/CloudSandboxExperimentSwitch";
 import { MultiWindowExperimentSwitch } from "@/components/MultiWindowExperimentSwitch";
 import { WebContentsViewPreviewSwitch } from "@/components/WebContentsViewPreviewSwitch";
+import { TestRunInPreviewSwitch } from "@/components/TestRunInPreviewSwitch";
 import { AutoApproveSqlSwitch } from "@/components/AutoApproveSqlSwitch";
 import { AutoApproveMcpSwitch } from "@/components/AutoApproveMcpSwitch";
 import { useSetAtom } from "jotai";
@@ -245,6 +246,10 @@ export default function SettingsPage() {
 
             <div id={SETTING_IDS.enableWebContentsViewPreview}>
               <WebContentsViewPreviewSwitch />
+            </div>
+
+            <div id={SETTING_IDS.enableTestRunInPreview}>
+              <TestRunInPreviewSwitch />
             </div>
 
             <div id={SETTING_IDS.autoApproveSafeMcpTools}>

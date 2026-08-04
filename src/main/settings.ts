@@ -69,6 +69,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   enableCodeExplorer: true,
   enableMultiWindow: false,
   enableWebContentsViewPreview: false,
+  enableTestRunInPreview: false,
   autoApproveNonSchemaSql: true,
   autoExpandPreviewPanel: true,
   enableContextCompaction: true,

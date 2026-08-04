@@ -47,6 +47,7 @@ export const SETTING_IDS = {
   enableCodeExplorer: "setting-enable-code-explorer",
   enableMultiWindow: "setting-enable-multi-window",
   enableWebContentsViewPreview: "setting-enable-web-contents-view-preview",
+  enableTestRunInPreview: "setting-enable-test-run-in-preview",
   enableSelectAppFromHomeChatInput:
     "setting-enable-select-app-from-home-chat-input",
   reset: "setting-reset",
@@ -549,6 +550,23 @@ export const SETTINGS_SEARCH_INDEX: SearchableSettingItem[] = [
       "webcontentsview",
       "browser",
       "iframe",
+      "experiment",
+    ],
+    sectionId: SECTION_IDS.experiments,
+    sectionLabel: "Experiments",
+  },
+
+  {
+    id: SETTING_IDS.enableTestRunInPreview,
+    label: "Run tests in preview panel",
+    description:
+      "Add a Tests panel action that runs your app's tests inside the native preview so you can watch them",
+    keywords: [
+      "tests",
+      "preview",
+      "playwright",
+      "cdp",
+      "debugging",
       "experiment",
     ],
     sectionId: SECTION_IDS.experiments,

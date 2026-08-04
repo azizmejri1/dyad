@@ -11,8 +11,9 @@ import {
   SquareDashed,
 } from "lucide-react";
 
-import { selectedAppIdAtom } from "@/atoms/appAtoms";
+import { previewModeAtom, selectedAppIdAtom } from "@/atoms/appAtoms";
 import { previewNativeViewAtom } from "@/atoms/previewAtoms";
+import { currentTestRunStateAtom } from "@/atoms/testRuntimeAtoms";
 import {
   Tooltip,
   TooltipContent,
@@ -64,6 +65,11 @@ export const PreviewWebContentsView = ({ loading }: { loading: boolean }) => {
   const { appUrl, originalUrl, mode } = useCurrentAppUrl(selectedAppId);
   const { settings } = useSettings();
   const setPreviewNativeView = useSetAtom(previewNativeViewAtom);
+  const setPreviewMode = useSetAtom(previewModeAtom);
+  // A preview-driven test run keeps this view alive even while the user browses
+  // to another tab, so advertise it and offer the way back.
+  const isTestRunActive =
+    useAtomValue(currentTestRunStateAtom).phase !== "idle";
   const { restartApp } = useRunApp();
 
   const hostRef = useRef<HTMLDivElement>(null);
@@ -275,6 +281,17 @@ export const PreviewWebContentsView = ({ loading }: { loading: boolean }) => {
           <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
             Experimental
           </span>
+          {isTestRunActive && (
+            <button
+              onClick={() => setPreviewMode("tests")}
+              title="Show the Tests panel. The run keeps going."
+              data-testid="preview-native-tests-running-chip"
+              className="flex shrink-0 items-center gap-1.5 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-900/60"
+            >
+              <span className="size-1.5 animate-pulse rounded-full bg-current" />
+              Tests running…
+            </button>
+          )}
         </div>
 
         <Tooltip>

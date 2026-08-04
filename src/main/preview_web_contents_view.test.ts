@@ -73,6 +73,7 @@ const h = vi.hoisted(() => {
   class FakeWebContentsView {
     webContents = new FakeViewContents();
     setBounds = vi.fn();
+    setVisible = vi.fn();
     options: unknown;
 
     constructor(options: unknown) {
@@ -103,8 +104,11 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  beginPreviewAutomation,
+  getPreviewViewStatus,
   hidePreviewView,
   isSupportedPreviewUrl,
+  waitForPreviewView,
   previewViewGoBack,
   previewViewGoForward,
   previewViewReload,
@@ -469,6 +473,139 @@ describe("navigation events", () => {
   it("ignores navigation commands when no view is showing", () => {
     const { asBrowserWindow } = createWindow();
     expect(() => previewViewReload(asBrowserWindow)).not.toThrow();
+  });
+});
+
+describe("automation (preview test runs)", () => {
+  function showAndAutomate() {
+    const created = createWindow();
+    showPreviewView(created.asBrowserWindow, { url: APP_URL, bounds: BOUNDS });
+    const view = latestView();
+    const destroyed = vi.fn();
+    const automation = beginPreviewAutomation(created.asBrowserWindow, {
+      onViewDestroyed: destroyed,
+    });
+    return { ...created, view, destroyed, automation };
+  }
+
+  it("refuses to start when no view is showing", () => {
+    const { asBrowserWindow } = createWindow();
+    expect(beginPreviewAutomation(asBrowserWindow)).toBeNull();
+  });
+
+  it("keeps the page alive when the renderer hides mid-run", () => {
+    const { asBrowserWindow, view } = showAndAutomate();
+
+    hidePreviewView(asBrowserWindow);
+
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(view.setVisible).toHaveBeenCalledWith(false);
+    expect(getPreviewViewStatus(asBrowserWindow).exists).toBe(true);
+  });
+
+  it("re-shows the hidden view when the renderer comes back", () => {
+    const { asBrowserWindow, view } = showAndAutomate();
+    hidePreviewView(asBrowserWindow);
+
+    showPreviewView(asBrowserWindow, { url: APP_URL, bounds: BOUNDS });
+
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroys a still-hidden view once the run ends", () => {
+    const { asBrowserWindow, view, automation } = showAndAutomate();
+    hidePreviewView(asBrowserWindow);
+
+    automation!.end();
+
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+    expect(getPreviewViewStatus(asBrowserWindow).exists).toBe(false);
+  });
+
+  it("leaves a visible view alone once the run ends", () => {
+    const { asBrowserWindow, view, automation } = showAndAutomate();
+
+    automation!.end();
+    automation!.end(); // idempotent
+
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(getPreviewViewStatus(asBrowserWindow).automationActive).toBe(false);
+  });
+
+  it("reports a view destroyed out from under the run", () => {
+    const { window, view, destroyed } = showAndAutomate();
+
+    window.emit("closed");
+
+    expect(destroyed).toHaveBeenCalledTimes(1);
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops spraying the system browser while a test drives the page", () => {
+    const { view } = showAndAutomate();
+    const contents = view.webContents;
+    const event = { preventDefault: vi.fn() };
+
+    contents.emit("will-navigate", event, "https://example.com", false, true);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(h.shell.openExternal).not.toHaveBeenCalled();
+
+    expect(
+      contents.windowOpenHandler?.({ url: "https://example.com" }),
+    ).toEqual({ action: "deny" });
+    expect(h.shell.openExternal).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitForPreviewView", () => {
+  it("resolves once the view is showing the run's origin", async () => {
+    const { asBrowserWindow } = createWindow();
+    showPreviewView(asBrowserWindow, { url: APP_URL, bounds: BOUNDS });
+
+    // Trailing slashes and paths differ between the two sides; origin is what
+    // matters.
+    await expect(
+      waitForPreviewView(asBrowserWindow, { url: "http://localhost:42101" }),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("reports that no preview is open when it times out empty", async () => {
+    vi.useFakeTimers();
+    const { asBrowserWindow } = createWindow();
+
+    const pending = waitForPreviewView(asBrowserWindow, {
+      url: APP_URL,
+      timeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(1500);
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      reason: "the native preview isn't open",
+    });
+    vi.useRealTimers();
+  });
+
+  it("reports what the preview is showing instead", async () => {
+    vi.useFakeTimers();
+    const { asBrowserWindow } = createWindow();
+    showPreviewView(asBrowserWindow, {
+      url: "http://localhost:42999/",
+      bounds: BOUNDS,
+    });
+
+    const pending = waitForPreviewView(asBrowserWindow, {
+      url: APP_URL,
+      timeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(1500);
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      reason: "it is showing http://localhost:42999/",
+    });
+    vi.useRealTimers();
   });
 });
 

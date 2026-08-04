@@ -422,6 +422,7 @@ const BaseUserSettingsFields = {
   enableCodeExplorer: z.boolean().optional(),
   enableMultiWindow: z.boolean().optional(),
   enableWebContentsViewPreview: z.boolean().optional(),
+  enableTestRunInPreview: z.boolean().optional(),
   enableAutoUpdate: z.boolean(),
   releaseChannel: ReleaseChannelSchema,
   runtimeMode2: RuntimeMode2Schema.optional(),

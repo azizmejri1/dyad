@@ -76,6 +76,29 @@ describe("SETTINGS_SEARCH_INDEX", () => {
     });
   });
 
+  it("includes the run-tests-in-preview experiment", () => {
+    expect(
+      SETTINGS_SEARCH_INDEX.find(
+        (item) => item.id === SETTING_IDS.enableTestRunInPreview,
+      ),
+    ).toEqual({
+      id: SETTING_IDS.enableTestRunInPreview,
+      label: "Run tests in preview panel",
+      description:
+        "Add a Tests panel action that runs your app's tests inside the native preview so you can watch them",
+      keywords: [
+        "tests",
+        "preview",
+        "playwright",
+        "cdp",
+        "debugging",
+        "experiment",
+      ],
+      sectionId: SECTION_IDS.experiments,
+      sectionLabel: "Experiments",
+    });
+  });
+
   it("includes the block unsafe npm packages experiment", () => {
     expect(
       SETTINGS_SEARCH_INDEX.find(
