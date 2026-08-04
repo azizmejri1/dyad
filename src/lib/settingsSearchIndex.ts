@@ -46,6 +46,7 @@ export const SETTING_IDS = {
   enableMcpToolSearch: "setting-enable-mcp-tool-search",
   enableCodeExplorer: "setting-enable-code-explorer",
   enableMultiWindow: "setting-enable-multi-window",
+  enableWebContentsViewPreview: "setting-enable-web-contents-view-preview",
   enableSelectAppFromHomeChatInput:
     "setting-enable-select-app-from-home-chat-input",
   reset: "setting-reset",
@@ -531,6 +532,23 @@ export const SETTINGS_SEARCH_INDEX: SearchableSettingItem[] = [
       "multi-window",
       "app",
       "context menu",
+      "experiment",
+    ],
+    sectionId: SECTION_IDS.experiments,
+    sectionLabel: "Experiments",
+  },
+
+  {
+    id: SETTING_IDS.enableWebContentsViewPreview,
+    label: "Enable native preview",
+    description:
+      "Add a toggle in the preview panel to render the app in a native browser view instead of an iframe",
+    keywords: [
+      "preview",
+      "native",
+      "webcontentsview",
+      "browser",
+      "iframe",
       "experiment",
     ],
     sectionId: SECTION_IDS.experiments,

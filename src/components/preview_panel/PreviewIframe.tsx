@@ -30,6 +30,7 @@ import {
   Pen,
   MoreVertical,
   Trash2,
+  SquareDashed,
 } from "lucide-react";
 import { selectedChatIdAtom } from "@/atoms/chatAtoms";
 import { CopyErrorMessage } from "@/components/CopyErrorMessage";
@@ -52,6 +53,7 @@ import {
   annotatorModeAtom,
   screenshotDataUrlAtom,
   pendingVisualChangesAtom,
+  previewNativeViewAtom,
 } from "@/atoms/previewAtoms";
 import { ComponentSelection } from "@/ipc/types";
 import { mergePendingChange } from "@/ipc/types/visual-editing";
@@ -92,6 +94,7 @@ import {
   normalizePreviewAddressPath,
 } from "./previewAddressPath";
 import { getPreviewToolbarActionVisibility } from "./previewToolbarLayout";
+import { PREVIEW_TOOLBAR_BUTTON_CLASSES } from "./previewToolbarStyles";
 import { usePreviewIframe } from "@/preview_iframe/usePreviewIframe";
 import {
   selectCanGoBack,
@@ -208,9 +211,6 @@ const ErrorBanner = ({ error, onDismiss, onAIFix }: ErrorBannerProps) => {
   );
 };
 
-const PREVIEW_TOOLBAR_BUTTON_CLASSES =
-  "flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40";
-
 // Preview iframe component
 export const PreviewIframe = ({ loading }: { loading: boolean }) => {
   const { t } = useTranslation("home");
@@ -238,6 +238,7 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
     currentComponentCoordinatesAtom,
   );
   const setPreviewIframeRef = useSetAtom(previewIframeRefAtom);
+  const setPreviewNativeView = useSetAtom(previewNativeViewAtom);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const componentMessageHandlerRef = useRef<(event: MessageEvent) => void>(
     () => undefined,
@@ -1418,6 +1419,26 @@ export const PreviewIframe = ({ loading }: { loading: boolean }) => {
 
           {/* Right action group - runtime and overflow actions */}
           <div className="flex shrink-0 items-center gap-1.5">
+            {settings?.enableWebContentsViewPreview && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => setPreviewNativeView(true)}
+                      aria-label="Switch to native preview"
+                      aria-pressed={false}
+                      data-testid="preview-native-toggle-on"
+                      className={PREVIEW_TOOLBAR_BUTTON_CLASSES}
+                    />
+                  }
+                >
+                  <SquareDashed size={16} />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Switch to native preview (Experimental)
+                </TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger
                 render={

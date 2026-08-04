@@ -15,6 +15,14 @@ export const currentComponentCoordinatesAtom = atom<{
 
 export const previewIframeRefAtom = atom<HTMLIFrameElement | null>(null);
 
+/**
+ * Renders the preview in an Electron WebContentsView instead of the iframe.
+ *
+ * Deliberately session-local rather than persisted: the native view is
+ * experimental, so restarting Dyad should always land back on the iframe.
+ */
+export const previewNativeViewAtom = atom<boolean>(false);
+
 export const annotatorModeAtom = atom<boolean>(false);
 
 export const screenshotDataUrlAtom = atom<string | null>(null);

@@ -1,9 +1,11 @@
 import { useAtomValue } from "jotai";
 import { previewModeAtom, selectedAppIdAtom } from "../../atoms/appAtoms";
+import { previewNativeViewAtom } from "@/atoms/previewAtoms";
 import { usePreviewReloadToken } from "@/hooks/useAppRun";
 
 import { CodeView } from "./CodeView";
 import { PreviewIframe } from "./PreviewIframe";
+import { PreviewWebContentsView } from "./PreviewWebContentsView";
 import { PreviewToolbar } from "./PreviewToolbar";
 import { Problems } from "./Problems";
 import { ConfigurePanel } from "./ConfigurePanel";
@@ -86,6 +88,9 @@ export function PreviewPanel() {
   const queryClient = useQueryClient();
   const key = usePreviewReloadToken(selectedAppId);
   const latestConsoleEntry = useLatestConsoleEntry(selectedAppId);
+  const previewNativeView = useAtomValue(previewNativeViewAtom);
+  const useNativePreview =
+    !!settings?.enableWebContentsViewPreview && previewNativeView;
   const {
     data: nodeSystemInfo,
     isLoading: isCheckingNode,
@@ -221,10 +226,17 @@ export function PreviewPanel() {
                     }}
                   />
                 ) : previewMode === "preview" ? (
-                  <PreviewIframe
-                    key={`${selectedAppId}-${key}`}
-                    loading={loading}
-                  />
+                  useNativePreview ? (
+                    <PreviewWebContentsView
+                      key={`${selectedAppId}-${key}`}
+                      loading={loading}
+                    />
+                  ) : (
+                    <PreviewIframe
+                      key={`${selectedAppId}-${key}`}
+                      loading={loading}
+                    />
+                  )
                 ) : previewMode === "code" ? (
                   <CodeView loading={loading} app={app ?? null} />
                 ) : previewMode === "configure" ? (

@@ -53,6 +53,29 @@ describe("SETTINGS_SEARCH_INDEX", () => {
     });
   });
 
+  it("includes the native preview experiment", () => {
+    expect(
+      SETTINGS_SEARCH_INDEX.find(
+        (item) => item.id === SETTING_IDS.enableWebContentsViewPreview,
+      ),
+    ).toEqual({
+      id: SETTING_IDS.enableWebContentsViewPreview,
+      label: "Enable native preview",
+      description:
+        "Add a toggle in the preview panel to render the app in a native browser view instead of an iframe",
+      keywords: [
+        "preview",
+        "native",
+        "webcontentsview",
+        "browser",
+        "iframe",
+        "experiment",
+      ],
+      sectionId: SECTION_IDS.experiments,
+      sectionLabel: "Experiments",
+    });
+  });
+
   it("includes the block unsafe npm packages experiment", () => {
     expect(
       SETTINGS_SEARCH_INDEX.find(

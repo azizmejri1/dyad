@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   nodeVersion: "v22.14.0",
   openExternalUrl: vi.fn(),
   previewModeAtom: Symbol("previewModeAtom"),
+  previewNativeViewAtom: Symbol("previewNativeViewAtom"),
+  previewNativeView: false,
   refetchNodeStatus: vi.fn(),
   reloadEnvPath: vi.fn(),
   runApp: vi.fn(),
@@ -37,6 +39,9 @@ vi.mock("jotai", async (importOriginal) => ({
     if (atom === mocks.selectedAppIdAtom) {
       return mocks.selectedAppId;
     }
+    if (atom === mocks.previewNativeViewAtom) {
+      return mocks.previewNativeView;
+    }
     return undefined;
   },
 }));
@@ -44,6 +49,10 @@ vi.mock("jotai", async (importOriginal) => ({
 vi.mock("../../atoms/appAtoms", () => ({
   previewModeAtom: mocks.previewModeAtom,
   selectedAppIdAtom: mocks.selectedAppIdAtom,
+}));
+
+vi.mock("@/atoms/previewAtoms", () => ({
+  previewNativeViewAtom: mocks.previewNativeViewAtom,
 }));
 
 vi.mock("@/preview_console/hooks", () => ({
@@ -144,6 +153,10 @@ vi.mock("./PreviewIframe", () => ({
   },
 }));
 
+vi.mock("./PreviewWebContentsView", () => ({
+  PreviewWebContentsView: () => <div>Preview native view</div>,
+}));
+
 vi.mock("./PreviewToolbar", () => ({
   PreviewToolbar: () => null,
 }));
@@ -195,6 +208,7 @@ describe("PreviewPanel", () => {
     mocks.runApp.mockResolvedValue(undefined);
     mocks.previewIframeMounted.mockReset();
     mocks.previewIframeUnmounted.mockReset();
+    mocks.previewNativeView = false;
     mocks.selectedAppId = 1;
     mocks.selectAppForPreview.mockReset();
     mocks.settings = {
@@ -226,6 +240,44 @@ describe("PreviewPanel", () => {
 
     expect(mocks.previewIframeUnmounted).toHaveBeenCalledTimes(1);
     expect(mocks.previewIframeMounted).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders the native view when the experiment and the toggle are both on", () => {
+    mocks.settings = {
+      disablePreviewNodeAutoInstall: false,
+      enableWebContentsViewPreview: true,
+    };
+    mocks.previewNativeView = true;
+
+    render(<PreviewPanel />);
+
+    expect(screen.getByText("Preview native view")).toBeTruthy();
+    expect(screen.queryByText("Preview iframe")).toBeNull();
+  });
+
+  it("keeps the iframe when the toggle is on but the experiment is off", () => {
+    mocks.previewNativeView = true;
+
+    render(<PreviewPanel />);
+
+    expect(screen.getByText("Preview iframe")).toBeTruthy();
+    expect(screen.queryByText("Preview native view")).toBeNull();
+  });
+
+  it("still gates the native view behind the Node.js requirement", () => {
+    mocks.settings = {
+      disablePreviewNodeAutoInstall: true,
+      enableWebContentsViewPreview: true,
+    };
+    mocks.previewNativeView = true;
+    mocks.nodeVersion = "";
+
+    render(<PreviewPanel />);
+
+    expect(
+      screen.getByText("Install Node.js to see your preview"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Preview native view")).toBeNull();
   });
 
   it("auto-starts managed Node install and skips running the app when Node.js is missing", async () => {
