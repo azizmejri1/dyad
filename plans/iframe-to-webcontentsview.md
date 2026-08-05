@@ -54,6 +54,17 @@ back to the Tests panel with results. A hard destroy mid-run reports "the previe
 rather than a bare CDP disconnect. External-link side effects are suppressed for the duration
 so a driven test cannot spray windows into the system browser.
 
+**Planned: synthetic cursor for watched runs** (plan: `plans/preview-test-cursor.md`).
+Playwright teleports between elements, so a watched run is hard to follow. Since nothing can
+draw over the native view, a fake cursor is drawn inside the driven page itself:
+
+- Run slowed via `connectOverCDP`'s `slowMo`, preview runs only
+- The fixture shim intercepts pointer actions and measures the target (`boundingBox`)
+- A page-injected runtime glides the cursor to the target — straight path, eased, slow
+  motion — over the existing CDP channel; no new bridge into the sandboxed view
+- Clicks land with a border flash + overlay pulse on the target element
+- Inert outside preview runs; action semantics and errors unchanged
+
 ---
 
 ## Phases 2 and 3 — why browsing isn't there yet
