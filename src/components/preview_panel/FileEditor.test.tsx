@@ -1,15 +1,16 @@
 import { useEffect, useRef } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, Provider } from "jotai";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { editorCursorAtom } from "@/atoms/viewAtoms";
+import { editorCursorAtom, unsavedEditorFilesAtom } from "@/atoms/viewAtoms";
 import { FileEditor } from "./FileEditor";
 
 const mocks = vi.hoisted(() => {
   let cursorListener:
     | ((event: { position: { lineNumber: number; column: number } }) => void)
     | undefined;
+  let changeListener: ((value: string | undefined) => void) | undefined;
   const editor = {
     getModel: vi.fn(() => ({
       isDisposed: () => false,
@@ -37,16 +38,25 @@ const mocks = vi.hoisted(() => {
     emitCursor(lineNumber: number, column: number) {
       cursorListener?.({ position: { lineNumber, column } });
     },
+    emitChange(value: string | undefined) {
+      changeListener?.(value);
+    },
+    setChangeListener(listener: (value: string | undefined) => void) {
+      changeListener = listener;
+    },
   };
 });
 
 vi.mock("@monaco-editor/react", () => ({
   default: ({
     onMount,
+    onChange,
   }: {
     onMount: (editor: typeof mocks.editor) => void;
+    onChange: (value: string | undefined) => void;
   }) => {
     const mounted = useRef(false);
+    mocks.setChangeListener(onChange);
     useEffect(() => {
       if (mounted.current) return;
       mounted.current = true;
@@ -185,5 +195,118 @@ describe("FileEditor cursor persistence", () => {
         column: 1,
       }),
     );
+  });
+});
+
+describe("FileEditor unsaved-file registry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const renderEditor = (
+    store: ReturnType<typeof createStore>,
+    queryClient: QueryClient,
+    props: { appId: number | null; filePath: string },
+  ) => (
+    <QueryClientProvider client={queryClient}>
+      <Provider store={store}>
+        <FileEditor {...props} />
+      </Provider>
+    </QueryClientProvider>
+  );
+
+  const unsavedPaths = (store: ReturnType<typeof createStore>) => [
+    ...store.get(unsavedEditorFilesAtom).values(),
+  ];
+
+  it("registers the file once its buffer diverges from disk", async () => {
+    const store = createStore();
+    render(
+      renderEditor(store, new QueryClient(), {
+        appId: 1,
+        filePath: "src/file.ts",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.editor.onDidBlurEditorText).toHaveBeenCalled(),
+    );
+    expect(unsavedPaths(store)).toEqual([]);
+
+    act(() => mocks.emitChange("const value = 2;"));
+
+    await waitFor(() =>
+      expect(unsavedPaths(store)).toEqual([
+        { appId: 1, filePath: "src/file.ts" },
+      ]),
+    );
+
+    // Typing the original content back is not a pending change.
+    act(() => mocks.emitChange("const value = 1;"));
+    await waitFor(() => expect(unsavedPaths(store)).toEqual([]));
+  });
+
+  it("clears the entry when the editor unmounts", async () => {
+    const store = createStore();
+    const view = render(
+      renderEditor(store, new QueryClient(), {
+        appId: 1,
+        filePath: "src/file.ts",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.editor.onDidBlurEditorText).toHaveBeenCalled(),
+    );
+    act(() => mocks.emitChange("dirty"));
+    await waitFor(() => expect(unsavedPaths(store)).toHaveLength(1));
+
+    view.unmount();
+
+    expect(unsavedPaths(store)).toEqual([]);
+  });
+
+  it("clears the previous file's entry when the path changes in place", async () => {
+    const store = createStore();
+    const queryClient = new QueryClient();
+    const view = render(
+      renderEditor(store, queryClient, { appId: 1, filePath: "src/first.ts" }),
+    );
+    await waitFor(() =>
+      expect(mocks.editor.onDidBlurEditorText).toHaveBeenCalled(),
+    );
+    act(() => mocks.emitChange("dirty"));
+    await waitFor(() =>
+      expect(unsavedPaths(store)).toEqual([
+        { appId: 1, filePath: "src/first.ts" },
+      ]),
+    );
+
+    view.rerender(
+      renderEditor(store, queryClient, { appId: 1, filePath: "src/second.ts" }),
+    );
+
+    // The stale first.ts entry must not survive; a leftover would leave an
+    // unsaved marker on a file that has no open editor.
+    await waitFor(() =>
+      expect(
+        unsavedPaths(store).some((entry) => entry.filePath === "src/first.ts"),
+      ).toBe(false),
+    );
+  });
+
+  it("never registers an entry without an app", async () => {
+    const store = createStore();
+    render(
+      renderEditor(store, new QueryClient(), {
+        appId: null,
+        filePath: "src/file.ts",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.editor.onDidBlurEditorText).toHaveBeenCalled(),
+    );
+
+    act(() => mocks.emitChange("dirty"));
+
+    expect(unsavedPaths(store)).toEqual([]);
   });
 });
