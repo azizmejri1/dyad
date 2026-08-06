@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, Provider } from "jotai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectedFileAtom, stagedDiffFileAtom } from "@/atoms/viewAtoms";
+import { openCommitDialogAtom, openStagedDiffAtom } from "@/atoms/commitAtoms";
 import { queryKeys } from "@/lib/queryKeys";
 import { CodeView } from "./CodeView";
 
@@ -752,6 +753,51 @@ describe("CodeView diff editing", () => {
     expect(screen.getByTestId("file-editor").textContent).toBe(
       "src/fallback.ts",
     );
+  });
+
+  it("reopens the commit dialog the staged diff was opened from", () => {
+    const store = createStore();
+    mocks.uncommittedFiles = [{ path: "src/staged.ts", status: "modified" }];
+    store.set(openStagedDiffAtom, {
+      path: "src/staged.ts",
+      returnTo: "editor",
+    });
+    renderCodeView(store, ["src/staged.ts"]);
+
+    expect(screen.queryByTestId("staged-diff-view")).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId("staged-diff-back-button"));
+
+    expect(store.get(stagedDiffFileAtom)).toBeNull();
+    expect(store.get(openCommitDialogAtom)).toBe("editor");
+  });
+
+  it("opens no dialog when leaving a staged diff opened from the dropdown", () => {
+    const store = createStore();
+    mocks.uncommittedFiles = [{ path: "src/staged.ts", status: "modified" }];
+    store.set(openStagedDiffAtom, { path: "src/staged.ts", returnTo: null });
+    renderCodeView(store, ["src/staged.ts"]);
+
+    fireEvent.click(screen.getByTestId("staged-diff-back-button"));
+
+    expect(store.get(stagedDiffFileAtom)).toBeNull();
+    expect(store.get(openCommitDialogAtom)).toBeNull();
+  });
+
+  it("does not reopen a commit dialog when editing the staged diff instead", () => {
+    const store = createStore();
+    mocks.uncommittedFiles = [{ path: "src/staged.ts", status: "modified" }];
+    store.set(openStagedDiffAtom, {
+      path: "src/staged.ts",
+      returnTo: "editor",
+    });
+    renderCodeView(store, ["src/staged.ts"]);
+
+    fireEvent.click(screen.getByTestId("edit-latest-version-button"));
+
+    // The user asked for the editor, so a dialog must not cover it.
+    expect(store.get(openCommitDialogAtom)).toBeNull();
+    expect(store.get(selectedFileAtom)).toEqual({ path: "src/staged.ts" });
   });
 
   it("disables editing when the displayed diff path is missing at HEAD", () => {
