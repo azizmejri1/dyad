@@ -179,6 +179,33 @@ describe("dyad auth bootstrap", () => {
     expect(typeof marker.startedAt).toBe("number");
   });
 
+  it("rejects a non-Supabase project URL without fetching or writing storage", async () => {
+    const h = setup();
+
+    h.sendLogin({
+      mode: "supabase-password",
+      email: "e@x.test",
+      password: "pw",
+      // The first label used to control the localStorage key while the rest of
+      // the host could point at an attacker-controlled endpoint.
+      projectUrl: "https://ref123.attacker.example",
+      anonKey: "anon-key",
+    });
+
+    await vi.waitFor(() =>
+      expect(h.posts).toContainEqual(
+        expect.objectContaining({
+          type: "dyad-auth-ready",
+          ok: false,
+          error: "invalid Supabase project URL",
+        }),
+      ),
+    );
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.localStorage.getItem("sb-ref123-auth-token")).toBeNull();
+    expect(h.replace).not.toHaveBeenCalled();
+  });
+
   it("signs in via the app's own Better Auth endpoint and lands on the homepage (Neon)", async () => {
     const h = setup();
     h.fetchMock.mockResolvedValue({ ok: true });

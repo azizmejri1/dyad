@@ -48,12 +48,22 @@
     );
   }
 
-  function projectRef(url) {
-    try {
-      return new URL(url).host.split(".")[0];
-    } catch {
-      return null;
+  function parseSupabaseProjectUrl(value) {
+    const url = new URL(value);
+    const match = /^([a-z0-9]+)\.supabase\.co$/i.exec(url.hostname);
+    if (
+      url.protocol !== "https:" ||
+      !match ||
+      url.port ||
+      url.username ||
+      url.password ||
+      (url.pathname !== "/" && url.pathname !== "") ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error("invalid Supabase project URL");
     }
+    return { ref: match[1], base: `https://${url.hostname}` };
   }
 
   async function neonSignIn(auth) {
@@ -69,9 +79,7 @@
   }
 
   async function supabaseSignIn(auth) {
-    const ref = projectRef(auth.projectUrl);
-    if (!ref) throw new Error("invalid Supabase project URL");
-    const base = auth.projectUrl.replace(/\/+$/, "");
+    const { ref, base } = parseSupabaseProjectUrl(auth.projectUrl);
     const response = await fetch(`${base}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: {
@@ -187,7 +195,7 @@
           JSON.stringify({
             mode: auth.mode,
             nonce: nonce,
-            ref: projectRef(auth.projectUrl),
+            ref: parseSupabaseProjectUrl(auth.projectUrl).ref,
             homeRedirects: 0,
             startedAt: Date.now(),
           }),
@@ -259,13 +267,10 @@
     login(auth, nonce);
   }
 
-  // `e.source !== window.parent` is the whole guard on a message that drives
-  // sign-in — it POSTs credentials to the app's auth endpoint, and on the
-  // Supabase path fetches an attacker-suppliable `auth.projectUrl` and writes
-  // its answer into localStorage. That guard means something only inside a
-  // frame. The proxy injects this script into EVERY previewed document, and
-  // opening the preview URL top-level in a browser makes `window.parent ===
-  // window`, at which point any script already on the page satisfies it.
+  // Keep the explicit framed check: when a preview URL is opened top-level,
+  // window.parent is the page itself and any app script could otherwise drive
+  // this privileged sign-in path. Authenticating the framing parent itself is
+  // separate proxy/protocol hardening and deliberately not handled here.
   const isFramed = window.parent !== window;
 
   window.addEventListener("message", (e) => {
