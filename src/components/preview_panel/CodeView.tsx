@@ -44,6 +44,15 @@ interface App {
   files?: string[];
 }
 
+// Fullscreen covers the window, but it has to stop below the app's title bar.
+// That strip is an OS drag region - and on macOS the traffic lights sit inside
+// it - so native chrome is drawn over any web content placed there and eats its
+// clicks, leaving this view's toolbar (refresh, exit fullscreen) unusable.
+// `no-app-region-drag` keeps the overlay out of the drag region even if the two
+// ever overlap.
+const FULLSCREEN_CLASSES =
+  "no-app-region-drag fixed top-[var(--layout-title-bar-offset)] right-0 bottom-0 left-0 z-50 shadow-2xl";
+
 export interface CodeViewProps {
   loading: boolean;
   app: App | null;
@@ -354,7 +363,9 @@ export const CodeView = ({ loading, app }: CodeViewProps) => {
   ) {
     return (
       <div
-        className={`flex flex-col bg-background ${isFullscreen ? "fixed inset-0 z-50 h-screen w-screen shadow-2xl" : "h-full"}`}
+        data-testid="code-view-container"
+        data-fullscreen={isFullscreen ? "true" : "false"}
+        className={`flex flex-col bg-background ${isFullscreen ? FULLSCREEN_CLASSES : "h-full"}`}
       >
         {/* Toolbar */}
         <div className="flex items-center p-2 border-b space-x-2">
@@ -437,6 +448,12 @@ export const CodeView = ({ loading, app }: CodeViewProps) => {
               render={
                 <button
                   onClick={() => setIsFullscreen((value) => !value)}
+                  aria-label={
+                    isFullscreen
+                      ? t("preview.exitFullScreen")
+                      : t("preview.enterFullScreen")
+                  }
+                  data-testid="code-view-fullscreen-button"
                   className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
                 />
               }

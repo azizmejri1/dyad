@@ -764,3 +764,74 @@ describe("CodeView diff editing", () => {
     expect(store.get(selectedFileAtom)).toBeNull();
   });
 });
+
+describe("CodeView fullscreen", () => {
+  beforeEach(() => {
+    mocks.previewState = { type: "closed" };
+    mocks.sendPreviewEvent.mockReset();
+    mocks.versionChanges = [];
+    mocks.uncommittedFiles = [];
+  });
+
+  function container(): HTMLElement {
+    return screen.getByTestId("code-view-container");
+  }
+
+  function fullscreenButton(): HTMLButtonElement {
+    return screen.getByTestId(
+      "code-view-fullscreen-button",
+    ) as HTMLButtonElement;
+  }
+
+  it("keeps the fullscreen overlay clear of the window title bar", () => {
+    const store = createStore();
+    renderCodeView(store, ["src/selected.ts"]);
+
+    fireEvent.click(fullscreenButton());
+
+    expect(container().dataset.fullscreen).toBe("true");
+    const classes = container().className.split(/\s+/);
+    // The title bar strip is an OS drag region that holds native window chrome
+    // (macOS's traffic lights). Native chrome is drawn over web content and
+    // eats its clicks, so an overlay anchored to the top of the window buries
+    // this toolbar's buttons - including the one that exits fullscreen.
+    expect(classes).toContain("top-[var(--layout-title-bar-offset)]");
+    expect(classes).not.toContain("inset-0");
+    expect(classes).not.toContain("top-0");
+    expect(classes).toContain("no-app-region-drag");
+  });
+
+  it("exits fullscreen from the toolbar button", () => {
+    const store = createStore();
+    renderCodeView(store, ["src/selected.ts"]);
+
+    fireEvent.click(fullscreenButton());
+    expect(container().dataset.fullscreen).toBe("true");
+    expect(fullscreenButton().getAttribute("aria-label")).toBe(
+      "preview.exitFullScreen",
+    );
+
+    fireEvent.click(fullscreenButton());
+
+    expect(container().dataset.fullscreen).toBe("false");
+    expect(container().className.split(/\s+/)).toContain("h-full");
+    expect(fullscreenButton().getAttribute("aria-label")).toBe(
+      "preview.enterFullScreen",
+    );
+  });
+
+  it("exits fullscreen on Escape", () => {
+    const store = createStore();
+    renderCodeView(store, ["src/selected.ts"]);
+
+    fireEvent.click(fullscreenButton());
+    expect(container().dataset.fullscreen).toBe("true");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(container().dataset.fullscreen).toBe("false");
+    // The scroll lock the overlay installs must come off with it, or the rest
+    // of the app is left unscrollable.
+    expect(document.body.style.overflow).not.toBe("hidden");
+  });
+});
