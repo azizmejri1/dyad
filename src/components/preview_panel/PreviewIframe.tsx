@@ -89,6 +89,7 @@ import { useUserBudgetInfo } from "@/hooks/useUserBudgetInfo";
 import { Annotator } from "@/pro/ui/components/Annotator/Annotator";
 import { VisualEditingToolbar } from "./VisualEditingToolbar";
 import { recordingStatusMessage } from "./RecordingBanner";
+import { RecordingBannerHost } from "./RecordingBannerHost";
 import { RecordingStorageWarningDialog } from "./RecordingStorageWarningDialog";
 import { resolvePreviewBrowserUrl } from "./previewBrowserUrl";
 import { PreviewLoadingScreen } from "./PreviewLoadingScreen";
@@ -1630,9 +1631,12 @@ export const PreviewIframe = ({
         </div>
       )}
 
-      {/* The recording bar itself lives at PreviewPanel level, alongside the
-          hoisted recorder, so leaving this tab can't take the session's only
-          Stop control off screen. */}
+      {/* Under the browser header rather than above it: on this tab the bar
+          reads as part of the preview's chrome instead of shoving it down.
+          PreviewPanel mounts this same host on every other tab, so leaving here
+          can't take the session's only Stop control off screen. */}
+      <RecordingBannerHost recorder={recorder} />
+
       <RecordingStorageWarningDialog
         open={recorder.pendingStart !== null}
         onOpenChange={(open) => {

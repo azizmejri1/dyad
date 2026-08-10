@@ -199,11 +199,18 @@ export function PreviewPanel() {
             <div className="flex h-full flex-col">
               <PreviewToolbar />
               <PackageManagerWarningBanner />
-              {/* Outside the tab switch below: a session holds the app's lock
-                  and its isolated database no matter which tab is showing, and
-                  this bar is the only thing that says so and the only place it
-                  can be stopped. */}
-              <RecordingBannerHost recorder={recorder} />
+              {/* A session holds the app's lock and its isolated database no
+                  matter which tab is showing, and this bar is the only thing
+                  that says so and the only place it can be stopped — so it is
+                  mounted here, outside the tab switch, rather than inside one
+                  tab. The preview is the exception: PreviewIframe renders this
+                  same host under its browser header, so the bar sits below the
+                  preview toolbar instead of shoving it down. That branch only
+                  renders once Node is present, hence the second condition —
+                  otherwise the bar would vanish on the tab it started on. */}
+              {(previewMode !== "preview" || isNodeMissing) && (
+                <RecordingBannerHost recorder={recorder} />
+              )}
               <div className="flex-1 overflow-y-auto">
                 {isNodeMissing ? (
                   <PreviewNodeRequirement
