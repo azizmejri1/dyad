@@ -5,6 +5,7 @@ import {
   createClient,
   createEventClient,
 } from "../contracts/core";
+import { WindowSessionIdSchema } from "@/window_infrastructure/types";
 
 // =============================================================================
 // System Schemas
@@ -235,6 +236,8 @@ export const systemContracts = {
     input: z.void(),
     output: z.object({
       isFirstSession: z.boolean(),
+      openWindowCount: z.number(),
+      windowSessionId: WindowSessionIdSchema,
     }),
   }),
 

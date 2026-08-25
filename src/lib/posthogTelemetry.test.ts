@@ -98,6 +98,8 @@ describe("getInitialLoadTelemetryProperties", () => {
         appVersion: "1.1.0",
         platform: "darwin",
         isFirstSession: false,
+        openWindowCount: 2,
+        restoredChatTabCount: 5,
       }),
     ).toEqual({
       isPro: true,
@@ -110,6 +112,8 @@ describe("getInitialLoadTelemetryProperties", () => {
       modelProvider: "auto",
       defaultChatMode: "ask",
       runtimeMode2: "docker",
+      openWindowCount: 2,
+      restoredChatTabCount: 5,
     });
   });
 
@@ -122,6 +126,8 @@ describe("getInitialLoadTelemetryProperties", () => {
         appVersion: "1.1.0",
         platform: null,
         isFirstSession: true,
+        openWindowCount: 1,
+        restoredChatTabCount: 0,
       }),
     ).toEqual({
       isPro: false,
@@ -134,6 +140,8 @@ describe("getInitialLoadTelemetryProperties", () => {
       modelProvider: "auto",
       defaultChatMode: null,
       runtimeMode2: "host",
+      openWindowCount: 1,
+      restoredChatTabCount: 0,
     });
   });
 });

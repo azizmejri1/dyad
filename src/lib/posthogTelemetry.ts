@@ -8,6 +8,8 @@ export type InitialLoadTelemetryInput = {
   appVersion: string;
   platform: string | null;
   isFirstSession: boolean;
+  openWindowCount: number;
+  restoredChatTabCount: number;
 };
 
 export function getSettingsPersonTelemetryProperties(settings: UserSettings) {
@@ -24,6 +26,8 @@ export function getInitialLoadTelemetryProperties({
   appVersion,
   platform,
   isFirstSession,
+  openWindowCount,
+  restoredChatTabCount,
 }: InitialLoadTelemetryInput) {
   return {
     ...getSettingsPersonTelemetryProperties(settings),
@@ -34,6 +38,13 @@ export function getInitialLoadTelemetryProperties({
     modelProvider: settings.selectedModel.provider,
     defaultChatMode: settings.defaultChatMode ?? null,
     runtimeMode2: settings.runtimeMode2 ?? "host",
+    // How many chats this window restored, and how many product windows are
+    // open. `app:initial-load` bypasses non-Pro sampling, so this is the one
+    // read of "several chats at once" that covers every opted-in user rather
+    // than a tenth of them. It is a launch snapshot: tabs opened later in a
+    // session show up in the next launch, since tabs are restored.
+    openWindowCount,
+    restoredChatTabCount,
   };
 }
 

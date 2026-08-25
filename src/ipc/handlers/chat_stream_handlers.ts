@@ -932,6 +932,19 @@ export function registerChatStreamHandlers() {
         streamId: req.streamId,
       };
       addTrackedValue(activeStreams, req.chatId, trackedStream);
+      // Emitted for every admitted turn, so the share of starts that land
+      // while another chat is already streaming is a rate with its own
+      // denominator. Main is the only place that sees all of them: the
+      // renderer's `chat:submit` covers the composer alone, not the turns
+      // started by Problems, Tests, Plan or Fix-all.
+      //
+      // `activeStreams` is keyed by chat, so this counts chats rather than
+      // requests: a chat's own subagent threads and review barrier run under
+      // its id and collapse into it, and a second stream on the same chat
+      // never reads as concurrency.
+      sendTelemetryEvent("chat:stream-start", {
+        concurrentChats: activeStreams.size,
+      });
       admissionPendingStreams.add(abortController);
 
       const loadChatForStream = () =>

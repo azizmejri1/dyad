@@ -19,6 +19,7 @@ import {
   markSourceChatTabRemoval,
   promoteMostRecentChatTabSession,
   pruneChatTabWindowSessions,
+  readStoredChatTabCount,
   removeActiveStoredChatTab,
   type StoredWindowChatTabSession,
 } from "./chat_tab_session_storage";
@@ -489,5 +490,77 @@ describe("per-window chat tab session storage", () => {
       pruneChatTabWindowSessions(unavailableStorage, [firstWindow]),
     ).not.toThrow();
     expect(consoleError).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("readStoredChatTabCount", () => {
+  const storedSession = (
+    windowSessionId: WindowSessionId,
+    chatIds: number[],
+  ): StoredWindowChatTabSession => ({
+    version: 2,
+    windowSessionId,
+    tabs: chatIds.map((chatId) => ({
+      chatId,
+      tabInstanceId: `tab-${chatId}` as TabInstanceId,
+    })),
+    selectedTabInstanceId: null,
+    closedChatIds: [],
+    updatedAt: 1,
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    // Left configured to a different window than the ones read below: the
+    // telemetry capture can run before the bootstrap round trip configures
+    // this renderer, so the count must follow its argument, not this state.
+    configureChatTabWindowSession(firstWindow, {
+      mayMigrateLegacySession: false,
+    });
+  });
+
+  it("counts the tabs of the window session it is asked about", () => {
+    localStorage.setItem(
+      chatTabSessionStorageKey(secondWindow),
+      JSON.stringify(storedSession(secondWindow, [10, 20, 30])),
+    );
+
+    expect(readStoredChatTabCount(localStorage, secondWindow)).toBe(3);
+    expect(readStoredChatTabCount(localStorage, firstWindow)).toBe(0);
+  });
+
+  it("reports no tabs for a session stored under another window", () => {
+    localStorage.setItem(
+      chatTabSessionStorageKey(secondWindow),
+      JSON.stringify(storedSession(firstWindow, [10, 20])),
+    );
+
+    expect(readStoredChatTabCount(localStorage, secondWindow)).toBe(0);
+  });
+
+  it("reports no tabs for an unparseable session", () => {
+    localStorage.setItem(chatTabSessionStorageKey(secondWindow), "{not json");
+
+    expect(readStoredChatTabCount(localStorage, secondWindow)).toBe(0);
+  });
+
+  it("reports no tabs instead of throwing when storage is unavailable", () => {
+    const unavailableStorage = {
+      length: 0,
+      clear: vi.fn(),
+      key: vi.fn(() => null),
+      removeItem: vi.fn(),
+      getItem: vi.fn(() => {
+        throw new Error("localStorage is not available");
+      }),
+      setItem: vi.fn(),
+    } satisfies Storage;
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    expect(readStoredChatTabCount(unavailableStorage, secondWindow)).toBe(0);
+    expect(readStoredChatTabCount(undefined, secondWindow)).toBe(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
   });
 });

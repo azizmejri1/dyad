@@ -65,6 +65,34 @@ export function getActiveStoredChatTabs(): StoredChatTab[] {
   return session.tabs;
 }
 
+/**
+ * How many chat tabs a window session has persisted.
+ *
+ * Takes its window session explicitly rather than reading the module's
+ * configured one, because `configureChatTabWindowSession` runs off the
+ * bootstrap round trip and the initial-load telemetry capture races it: a
+ * secondary window reading the still-default primary key would report another
+ * window's tabs. Unreadable storage counts as no tabs rather than throwing the
+ * way `getActiveStoredChatTabs` does — a measurement must not break the launch
+ * it measures.
+ */
+export function readStoredChatTabCount(
+  storage: Storage | undefined,
+  windowSessionId: WindowSessionId,
+): number {
+  try {
+    if (!storage) return 0;
+    const session = parseStoredSession(
+      storage.getItem(chatTabSessionStorageKey(windowSessionId)),
+      windowSessionId,
+    );
+    return session?.tabs.length ?? 0;
+  } catch (error) {
+    console.error("Failed to read the chat tab count for telemetry", error);
+    return 0;
+  }
+}
+
 export function activeStoredChatTabInstanceState(
   tabInstanceId: TabInstanceId,
 ): "present" | "absent" {

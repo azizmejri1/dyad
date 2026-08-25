@@ -6,6 +6,7 @@ import {
   getInitialLoadTelemetryProperties,
   getSettingsPersonTelemetryProperties,
 } from "@/lib/posthogTelemetry";
+import { readStoredChatTabCount } from "@/window_infrastructure/chat_tab_session_storage";
 import { usePostHog } from "posthog-js/react";
 import { useAppVersion } from "./useAppVersion";
 import { queryKeys } from "@/lib/queryKeys";
@@ -97,6 +98,11 @@ export function useSettings() {
         appVersion,
         platform: platform ?? null,
         isFirstSession: initialLoadTelemetryContext.isFirstSession,
+        openWindowCount: initialLoadTelemetryContext.openWindowCount,
+        restoredChatTabCount: readStoredChatTabCount(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          initialLoadTelemetryContext.windowSessionId,
+        ),
       }),
     );
     initialLoadTelemetryState = "sent";

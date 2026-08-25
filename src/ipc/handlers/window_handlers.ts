@@ -4,6 +4,7 @@ import { platform } from "os";
 import { createTypedHandler } from "./base";
 import { systemContracts } from "../types/system";
 import { getInitialLoadIsFirstSession } from "@/main/settings";
+import { windowRegistry } from "@/window_infrastructure/main/window_registry";
 
 const logger = log.scope("window-handlers");
 
@@ -60,9 +61,16 @@ export function registerWindowHandlers() {
 
   createTypedHandler(
     systemContracts.getInitialLoadTelemetryContext,
-    async () => {
+    async (event) => {
       return {
         isFirstSession: getInitialLoadIsFirstSession(),
+        // Registered product windows, not `BrowserWindow.getAllWindows()`,
+        // which also counts preview popups — those hold no chats.
+        openWindowCount: windowRegistry.liveEndpoints().length,
+        // The renderer configures its own window session off the bootstrap
+        // round trip, which can settle after this one; supplying the session
+        // here lets the caller read its own tabs without racing that.
+        windowSessionId: windowRegistry.ensureRegistered(event.sender),
       };
     },
   );
