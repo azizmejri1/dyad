@@ -12,6 +12,9 @@ dist/
 # playwright
 playwright-report/
 test-results/
+
+# Live Neon campaign runs (journals, logs, reports; may reference live resource IDs)
+neon-live-runs/
 blob-report/
 flakiness-report/
 
