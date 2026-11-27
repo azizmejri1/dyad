@@ -32,12 +32,12 @@ export function crashPerformanceEventFields(
     time_since_last_heartbeat_ms: Date.now() - perf.timestamp,
     last_known_heap_used_mb: perf.heapUsedMB,
     last_known_heap_limit_mb: perf.heapLimitMB,
-    ...workingSetFields("last_known_working_set", perf.processWorkingSetsMB),
+    ...perTypeFields("last_known_working_set", perf.processWorkingSetsMB, "mb"),
     ...activityFields("last_known", perf.activity),
     peak_heap_used_mb: perf.peakHeapUsedMB,
     peak_heap_pct: perf.peakHeapPct,
     peak_rss_mb: perf.peakRssMB,
-    ...workingSetFields("peak_working_set", perf.peakProcessWorkingSetsMB),
+    ...perTypeFields("peak_working_set", perf.peakProcessWorkingSetsMB, "mb"),
     ...activityFields("peak", perf.peakActivity),
     peak_timestamp: perf.peakTimestamp,
     // Windows commit charge: was the whole machine out of promisable memory?
@@ -50,7 +50,7 @@ export function crashPerformanceEventFields(
         : null,
     ),
     // How much of the commit charge was Dyad's, per process type.
-    ...workingSetFields("last_known_commit", perf.processCommitMB),
+    ...perTypeFields("last_known_commit", perf.processCommitMB, "mb"),
     // The renderer figures above, split into Dyad's UI and app previews.
     last_known_ui_renderer_working_set_mb: perf.uiRendererWorkingSetMB,
     last_known_preview_renderer_working_set_mb:
@@ -71,6 +71,19 @@ export function crashPerformanceEventFields(
     dev_server_max_mb: perf.devServerMaxMB,
     dev_server_max_process_count: perf.devServerMaxProcessCount,
     dev_server_sampled_at: perf.devServerSampledAt,
+    // CPU attribution, each a share of the whole machine like
+    // last_known_system_cpu_pct: was it Dyad, a dev server, or something
+    // else? Process names stay out of telemetry; only the largest non-Dyad
+    // consumer's share is sent.
+    last_known_cpu_count: perf.cpuCount,
+    ...perTypeFields("last_known_cpu_share", perf.processCpuSharePct, "pct"),
+    last_known_ui_renderer_cpu_share_pct: perf.uiRendererCpuSharePct,
+    last_known_preview_renderer_cpu_share_pct: perf.previewRendererCpuSharePct,
+    dev_server_cpu_share_pct: perf.devServerCpuSharePct,
+    dev_server_max_cpu_share_pct: perf.devServerMaxCpuSharePct,
+    top_other_process_cpu_share_pct: perf.topCpuProcesses?.find(
+      (entry) => entry.owner === "other",
+    )?.cpuSharePct,
   };
 }
 
@@ -141,24 +154,26 @@ export function crashAnnotationEventFields(
   return fields;
 }
 
-function workingSetFields(
+function perTypeFields(
   prefix: string,
-  sets: Record<string, number> | undefined,
+  values: Record<string, number> | undefined,
+  unit: "mb" | "pct",
 ): Record<string, number> {
-  if (!sets) {
+  if (!values) {
     return {};
   }
   const fields: Record<string, number> = {};
   let other = 0;
-  for (const [key, value] of Object.entries(sets)) {
+  for (const [key, value] of Object.entries(values)) {
     if (KNOWN_PROCESS_TYPES.has(key)) {
-      fields[`${prefix}_${key}_mb`] = value;
+      fields[`${prefix}_${key}_${unit}`] = value;
     } else {
       other += value;
     }
   }
   if (other > 0) {
-    fields[`${prefix}_other_mb`] = other;
+    // Rounded so summed percentages do not carry float noise.
+    fields[`${prefix}_other_${unit}`] = Math.round(other * 100) / 100;
   }
   return fields;
 }

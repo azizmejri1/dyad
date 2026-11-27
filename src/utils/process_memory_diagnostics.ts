@@ -35,6 +35,8 @@ export interface PsProcessEntry {
   ppid: number;
   rssKb: number;
   command: string;
+  // CPU time used since the process started, when the snapshot asked for it.
+  cpuSeconds?: number;
 }
 
 // =============================================================================

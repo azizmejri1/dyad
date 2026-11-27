@@ -543,6 +543,34 @@ export const LastKnownPerformanceSchema = z.object({
   devServerMaxMB: z.number().optional(),
   devServerMaxProcessCount: z.number().optional(),
   devServerSampledAt: z.number().optional(),
+  // CPU attribution. Unlike cpuUsagePercent (main process, per-core, can
+  // pass 100), every *CpuSharePct is a share of the whole machine, the
+  // scale of systemCpuPercent, so the parts can be read against it.
+  // cpuCount converts a share back into cores.
+  cpuCount: z.number().optional(),
+  // Per Electron process type, since the previous 30s heartbeat.
+  processCpuSharePct: z.record(z.string(), z.number()).optional(),
+  // The "tab" share split like the renderer working sets above.
+  uiRendererCpuSharePct: z.number().optional(),
+  previewRendererCpuSharePct: z.number().optional(),
+  // Dev server process trees, all together and the busiest one, averaged
+  // since the previous process-table snapshot (a few minutes; see
+  // devServerSampledAt).
+  devServerCpuSharePct: z.number().optional(),
+  devServerMaxCpuSharePct: z.number().optional(),
+  // The machine's top CPU consumers over that same window, grouped by
+  // executable name and owner. Taken only while a dev server runs. Names
+  // stay local (logs, settings) and are not sent to telemetry.
+  topCpuProcesses: z
+    .array(
+      z.object({
+        name: z.string(),
+        owner: z.enum(["dyad", "dev_server", "other"]),
+        processCount: z.number(),
+        cpuSharePct: z.number(),
+      }),
+    )
+    .optional(),
 });
 
 /**

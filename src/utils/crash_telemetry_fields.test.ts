@@ -51,6 +51,32 @@ describe("crashPerformanceEventFields", () => {
       devServerMaxMB: 1200,
       devServerMaxProcessCount: 4,
       devServerSampledAt: 1751499800000,
+      cpuCount: 8,
+      processCpuSharePct: { browser: 0.3, tab: 40.1, gpu: 2.5, zygote: 0.1 },
+      uiRendererCpuSharePct: 30.05,
+      previewRendererCpuSharePct: 10.05,
+      devServerCpuSharePct: 12.5,
+      devServerMaxCpuSharePct: 9.5,
+      topCpuProcesses: [
+        {
+          name: "node.exe",
+          owner: "dev_server",
+          processCount: 3,
+          cpuSharePct: 12.5,
+        },
+        {
+          name: "MsMpEng.exe",
+          owner: "other",
+          processCount: 1,
+          cpuSharePct: 9.25,
+        },
+        {
+          name: "SearchIndexer.exe",
+          owner: "other",
+          processCount: 1,
+          cpuSharePct: 3,
+        },
+      ],
     });
 
     expect(fields.last_known_working_set_browser_mb).toBe(400);
@@ -95,6 +121,19 @@ describe("crashPerformanceEventFields", () => {
     expect(fields.dev_server_max_mb).toBe(1200);
     expect(fields.dev_server_max_process_count).toBe(4);
     expect(fields.dev_server_sampled_at).toBe(1751499800000);
+    // CPU attribution, each a share of the whole machine.
+    expect(fields.last_known_cpu_count).toBe(8);
+    expect(fields.last_known_cpu_share_browser_pct).toBe(0.3);
+    expect(fields.last_known_cpu_share_tab_pct).toBe(40.1);
+    expect(fields.last_known_cpu_share_gpu_pct).toBe(2.5);
+    expect(fields.last_known_cpu_share_other_pct).toBe(0.1);
+    expect(fields.last_known_ui_renderer_cpu_share_pct).toBe(30.05);
+    expect(fields.last_known_preview_renderer_cpu_share_pct).toBe(10.05);
+    expect(fields.dev_server_cpu_share_pct).toBe(12.5);
+    expect(fields.dev_server_max_cpu_share_pct).toBe(9.5);
+    // The biggest consumer outside Dyad, without its name.
+    expect(fields.top_other_process_cpu_share_pct).toBe(9.25);
+    expect(JSON.stringify(fields)).not.toContain("MsMpEng");
 
     // No object-valued properties: PostHog cannot filter nested JSON.
     for (const value of Object.values(fields)) {
@@ -113,6 +152,8 @@ describe("crashPerformanceEventFields", () => {
     expect(fields.last_known_disk_total_mb).toBeUndefined();
     expect(fields.last_known_active_streams).toBeUndefined();
     expect(fields.peak_active_streams).toBeUndefined();
+    expect(fields.last_known_cpu_share_browser_pct).toBeUndefined();
+    expect(fields.top_other_process_cpu_share_pct).toBeUndefined();
   });
 });
 

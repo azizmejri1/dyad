@@ -20,6 +20,12 @@ import { getCachedPagefileSettings } from "./windows_pagefile";
 import { getLatestRendererHeapReport } from "./renderer_heap_reports";
 import { getDevServerMemorySample } from "./dev_server_memory";
 import { getPreviewViewOSProcessIds } from "../main/preview_web_contents_view";
+import {
+  cpuSharesBetween,
+  roundPct,
+  type CpuTimeSnapshot,
+  type ProcessCpuTime,
+} from "./process_cpu";
 
 // Tells a registered product window from any other BrowserWindow (preview
 // popups, for one). Supplied by main.ts at start-up; the registry itself
@@ -37,6 +43,8 @@ let lastCpuUsage: NodeJS.CpuUsage | null = null;
 let lastTimestamp: number | null = null;
 let lastSystemCpuInfo: os.CpuInfo[] | null = null;
 let lastSystemTimestamp: number | null = null;
+// Cumulative CPU time of each Electron process at the previous heartbeat.
+let lastProcessCpu: CpuTimeSnapshot | null = null;
 
 // Session memory highs. peakRssMB comes from the kernel and is exact; the
 // others are maxima over sampled values and can miss short spikes.
@@ -67,21 +75,27 @@ function getHeapStatsMB(): { heapUsedMB: number; heapLimitMB: number } {
   };
 }
 
-interface RendererSplitMB {
+interface RendererSplit {
   uiWorkingSetMB: number;
   previewWorkingSetMB: number;
   uiCommitMB: number | null;
   previewCommitMB: number | null;
+  // Null until a previous heartbeat gives a baseline.
+  uiCpuSharePct: number | null;
+  previewCpuSharePct: number | null;
 }
 
-interface ProcessMemoryMetrics {
+interface ProcessMetrics {
   // Working set per Electron process type, e.g.
   // { browser: 400, tab: 900, gpu: 120, utility: 300 }.
   workingSetsMB: Record<string, number>;
   // Private commit per type. Windows only; null elsewhere.
   commitMB: Record<string, number> | null;
-  // The "tab" line above, split by what each renderer process hosts.
-  rendererSplit: RendererSplitMB | null;
+  // CPU per type since the previous heartbeat, as a share of the whole
+  // machine (the scale of systemCpuPercent). Null on the first heartbeat.
+  cpuSharePct: Record<string, number> | null;
+  // The "tab" lines above, split by what each renderer process hosts.
+  rendererSplit: RendererSplit | null;
 }
 
 /**
@@ -125,12 +139,17 @@ function getRendererPidGroups(): {
   return { uiPids, previewPids };
 }
 
+type RendererGroup = "ui" | "preview" | null;
+
 /**
- * Memory per Electron process type. Main process RSS alone dramatically
- * understates real usage. Cheap (no shell-outs); safe for periodic capture.
+ * Memory and CPU per Electron process type. Main process RSS alone
+ * dramatically understates real usage, and main process CPU says nothing
+ * about a renderer or the GPU process spinning. Cheap (no shell-outs);
+ * safe for periodic capture.
  */
-function getProcessMemoryMetrics(): ProcessMemoryMetrics | null {
+function getProcessMetrics(cpuCount: number): ProcessMetrics | null {
   try {
+    const now = Date.now();
     const metrics = app.getAppMetrics();
     const { uiPids, previewPids } = getRendererPidGroups();
     const workingSetsMB: Record<string, number> = {};
@@ -141,8 +160,26 @@ function getProcessMemoryMetrics(): ProcessMemoryMetrics | null {
     let previewWorkingSet = 0;
     let uiCommit = 0;
     let previewCommit = 0;
+    // Keyed by pid and creation time, so a reused pid is a new process.
+    const cpuTimes = new Map<string, ProcessCpuTime>();
+    const cpuOwners = new Map<string, { type: string; group: RendererGroup }>();
     for (const metric of metrics) {
       const key = metric.type.toLowerCase();
+      let rendererGroup: RendererGroup = null;
+      if (key === "tab" && uiPids.has(metric.pid)) {
+        rendererGroup = "ui";
+      } else if (key === "tab" && previewPids.has(metric.pid)) {
+        rendererGroup = "preview";
+      }
+      const cumulativeCpu = metric.cpu.cumulativeCPUUsage;
+      if (typeof cumulativeCpu === "number") {
+        const cpuKey = `${metric.pid}:${metric.creationTime}`;
+        cpuTimes.set(cpuKey, {
+          cpuSeconds: cumulativeCpu,
+          startedAt: metric.creationTime,
+        });
+        cpuOwners.set(cpuKey, { type: key, group: rendererGroup });
+      }
       const workingSet = metric.memory.workingSetSize / 1024;
       workingSetsMB[key] = (workingSetsMB[key] ?? 0) + workingSet;
       // privateBytes is only reported on Windows.
@@ -152,14 +189,11 @@ function getProcessMemoryMetrics(): ProcessMemoryMetrics | null {
         sawCommit = true;
         commitMB[key] = (commitMB[key] ?? 0) + commit;
       }
-      if (key !== "tab") {
-        continue;
-      }
-      if (uiPids.has(metric.pid)) {
+      if (rendererGroup === "ui") {
         matchedRenderer = true;
         uiWorkingSet += workingSet;
         uiCommit += commit;
-      } else if (previewPids.has(metric.pid)) {
+      } else if (rendererGroup === "preview") {
         matchedRenderer = true;
         previewWorkingSet += workingSet;
         previewCommit += commit;
@@ -171,9 +205,42 @@ function getProcessMemoryMetrics(): ProcessMemoryMetrics | null {
     for (const key of Object.keys(commitMB)) {
       commitMB[key] = Math.round(commitMB[key]);
     }
+
+    // cumulativeCPUUsage rather than percentCPUUsage: the latter is
+    // relative to whichever caller last read app.getAppMetrics(), and the
+    // session-export diagnostics read it too.
+    const previousCpu = lastProcessCpu;
+    const currentCpu: CpuTimeSnapshot = { takenAt: now, processes: cpuTimes };
+    lastProcessCpu = cpuTimes.size > 0 ? currentCpu : null;
+    let cpuSharePct: Record<string, number> | null = null;
+    let uiCpu = 0;
+    let previewCpu = 0;
+    const shares = previousCpu
+      ? cpuSharesBetween(previousCpu, currentCpu, cpuCount)
+      : null;
+    // Empty when no time passed, as with a capture right after the last
+    // heartbeat: no figure rather than an empty one.
+    if (shares && shares.size > 0) {
+      cpuSharePct = {};
+      for (const [cpuKey, share] of shares) {
+        const owner = cpuOwners.get(cpuKey);
+        if (!owner) continue;
+        cpuSharePct[owner.type] = (cpuSharePct[owner.type] ?? 0) + share;
+        if (owner.group === "ui") {
+          uiCpu += share;
+        } else if (owner.group === "preview") {
+          previewCpu += share;
+        }
+      }
+      for (const key of Object.keys(cpuSharePct)) {
+        cpuSharePct[key] = roundPct(cpuSharePct[key]);
+      }
+    }
+
     return {
       workingSetsMB,
       commitMB: sawCommit ? commitMB : null,
+      cpuSharePct,
       // Omitted rather than zero when no renderer process was matched, as
       // during a renderer reload: zero would read as a real measurement.
       rendererSplit: matchedRenderer
@@ -182,12 +249,37 @@ function getProcessMemoryMetrics(): ProcessMemoryMetrics | null {
             previewWorkingSetMB: Math.round(previewWorkingSet),
             uiCommitMB: sawCommit ? Math.round(uiCommit) : null,
             previewCommitMB: sawCommit ? Math.round(previewCommit) : null,
+            uiCpuSharePct: cpuSharePct ? roundPct(uiCpu) : null,
+            previewCpuSharePct: cpuSharePct ? roundPct(previewCpu) : null,
           }
         : null,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * "41.2% (browser 0.3%, tab 38.4% [ui 30.1%, preview 8.3%], gpu 2.5%)",
+ * or "?" before there is a baseline.
+ */
+function formatProcessCpu(metrics: ProcessMetrics | null): string {
+  if (!metrics?.cpuSharePct) {
+    return "?";
+  }
+  const shares = metrics.cpuSharePct;
+  const split = metrics.rendererSplit;
+  const total = roundPct(
+    Object.values(shares).reduce((sum, share) => sum + share, 0),
+  );
+  const parts = Object.entries(shares).map(([type, share]) => {
+    const detail =
+      type === "tab" && split?.uiCpuSharePct != null
+        ? ` [ui ${split.uiCpuSharePct}%, preview ${split.previewCpuSharePct}%]`
+        : "";
+    return `${type} ${share}%${detail}`;
+  });
+  return `${total}% (${parts.join(", ")})`;
 }
 
 /**
@@ -338,7 +430,8 @@ function getSystemCpuUsagePercent(): number | null {
 function capturePerformanceMetrics() {
   try {
     const memoryUsageMB = getMemoryUsageMB();
-    const processMetrics = getProcessMemoryMetrics();
+    const cpuCount = os.cpus().length;
+    const processMetrics = getProcessMetrics(cpuCount);
     const processWorkingSetsMB = processMetrics?.workingSetsMB ?? null;
     const allProcessesMemoryMB = processWorkingSetsMB
       ? Object.values(processWorkingSetsMB).reduce((sum, mb) => sum + mb, 0)
@@ -376,10 +469,14 @@ function capturePerformanceMetrics() {
     const devServers = getDevServerMemorySample({
       rootPids: getRunningAppProcessPids().map(({ pid }) => pid),
       now: Date.now(),
+      cpuCount,
     });
 
+    // CPU=... is the main process in per-core percent (it can pass 100);
+    // the process and dev server figures are shares of the whole machine,
+    // like System CPU, so they can be read against it directly.
     logger.debug(
-      `Performance: Memory=${memoryUsageMB}MB, Heap=${heapUsedMB}/${heapLimitMB}MB, All Processes=${allProcessesMemoryMB ?? "?"}MB, CPU=${cpuUsagePercent}%, System Memory=${systemMemory.usedMemoryMB}/${systemMemory.totalMemoryMB}MB (${systemMemory.usagePercent}%), System CPU=${systemCpuPercent}%`,
+      `Performance: Memory=${memoryUsageMB}MB, Heap=${heapUsedMB}/${heapLimitMB}MB, All Processes=${allProcessesMemoryMB ?? "?"}MB, CPU=${cpuUsagePercent}%, System Memory=${systemMemory.usedMemoryMB}/${systemMemory.totalMemoryMB}MB (${systemMemory.usagePercent}%), System CPU=${systemCpuPercent}%, Dyad Processes CPU=${formatProcessCpu(processMetrics)}, Dev Server CPU=${devServers?.cpuSharePct !== undefined ? `${devServers.cpuSharePct}%` : "?"}`,
     );
 
     // Child process working sets drift constantly, so only main process
@@ -417,6 +514,7 @@ function capturePerformanceMetrics() {
         systemMemoryUsageMB: systemMemory.usedMemoryMB,
         systemMemoryTotalMB: systemMemory.totalMemoryMB,
         systemCpuPercent,
+        cpuCount,
         ...(diskUsage && {
           diskTotalMB: diskUsage.totalMB,
           diskUsedMB: diskUsage.usedMB,
@@ -438,6 +536,9 @@ function capturePerformanceMetrics() {
         ...(processMetrics?.commitMB && {
           processCommitMB: processMetrics.commitMB,
         }),
+        ...(processMetrics?.cpuSharePct && {
+          processCpuSharePct: processMetrics.cpuSharePct,
+        }),
         ...(rendererSplit && {
           uiRendererWorkingSetMB: rendererSplit.uiWorkingSetMB,
           previewRendererWorkingSetMB: rendererSplit.previewWorkingSetMB,
@@ -446,6 +547,12 @@ function capturePerformanceMetrics() {
           }),
           ...(rendererSplit.previewCommitMB !== null && {
             previewRendererCommitMB: rendererSplit.previewCommitMB,
+          }),
+          ...(rendererSplit.uiCpuSharePct !== null && {
+            uiRendererCpuSharePct: rendererSplit.uiCpuSharePct,
+          }),
+          ...(rendererSplit.previewCpuSharePct !== null && {
+            previewRendererCpuSharePct: rendererSplit.previewCpuSharePct,
           }),
         }),
         mainExternalMB: mainExternal.externalMB,
@@ -460,6 +567,15 @@ function capturePerformanceMetrics() {
           devServerMaxMB: devServers.maxMB,
           devServerMaxProcessCount: devServers.maxProcessCount,
           devServerSampledAt: devServers.sampledAt,
+          ...(devServers.cpuSharePct !== undefined && {
+            devServerCpuSharePct: devServers.cpuSharePct,
+          }),
+          ...(devServers.maxCpuSharePct !== undefined && {
+            devServerMaxCpuSharePct: devServers.maxCpuSharePct,
+          }),
+          ...(devServers.topCpuProcesses && {
+            topCpuProcesses: devServers.topCpuProcesses,
+          }),
         }),
         activity,
         peakHeapUsedMB,

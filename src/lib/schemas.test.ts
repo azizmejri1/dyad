@@ -100,6 +100,20 @@ describe("StoredUserSettingsSchema lastKnownPerformance", () => {
       devServerMaxMB: 1200,
       devServerMaxProcessCount: 4,
       devServerSampledAt: 1751499800000,
+      cpuCount: 8,
+      processCpuSharePct: { browser: 0.3, tab: 40.1, gpu: 2.5 },
+      uiRendererCpuSharePct: 30.05,
+      previewRendererCpuSharePct: 10.05,
+      devServerCpuSharePct: 12.5,
+      devServerMaxCpuSharePct: 9.5,
+      topCpuProcesses: [
+        {
+          name: "MsMpEng.exe",
+          owner: "other" as const,
+          processCount: 1,
+          cpuSharePct: 9.25,
+        },
+      ],
     };
 
     const parsed = StoredUserSettingsSchema.parse({
